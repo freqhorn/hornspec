@@ -91,6 +91,31 @@ namespace z3
     void set(params const & p)
     { Z3_fixedpoint_set_params(ctx(), m_fixedpoint, p); check_error(); }
   };
+    
+    class ast_map : public object {
+        Z3_ast_map m_map;
+        void init(Z3_ast_map v) { Z3_ast_map_inc_ref(ctx(), v); m_map = v; }
+    public:
+        ast_map(context & c):object(c) { init(Z3_mk_ast_map(c)); }
+        ast_map(context & c, Z3_ast_map v):object(c) { init(v); }
+        ast_map(ast_map const & s):object(s), m_map(s.m_map) { Z3_ast_map_inc_ref(ctx(), m_map); }
+        ~ast_map() { Z3_ast_map_dec_ref(ctx(), m_map); }
+        operator Z3_ast_map() const { return m_map; }
+        unsigned size() const { return Z3_ast_map_size(ctx(), m_map); }
+        bool empty() const { return size() == 0; }
+        ast_map & operator=(ast_map const & s) {
+            Z3_ast_map_inc_ref(s.ctx(), s.m_map);
+            Z3_ast_map_dec_ref(ctx(), m_map);
+            m_ctx = s.m_ctx;
+            m_map = s.m_map;
+            return *this;
+        }
+        void insert (ast const &k, ast const &v) { Z3_ast_map_insert(ctx(), m_map, k, v); check_error(); };
+        ast find (ast const &k) { Z3_ast res = Z3_ast_map_find(ctx(), m_map, k); check_error(); return ast (ctx (), res); };
+        ast_vector get_keys() { Z3_ast_vector res =  Z3_ast_map_keys(ctx(), m_map); check_error(); return ast_vector (ctx (), res); };
+        
+        friend std::ostream & operator<<(std::ostream & out, ast_map const & v) { out << Z3_ast_map_to_string(v.ctx(), v); return out; }
+    };
 }
 
 
@@ -164,7 +189,7 @@ namespace ufo
 	res.push_back (z3.toExpr (gast));
       }
 
-    return mknary<AND> (mk<TRUE> (e->efac ()), res);
+    return mknary<AND> (mk<FALSE> (e->efac ()), res);
   }
 
 
@@ -193,7 +218,30 @@ namespace ufo
   std::string z3_to_smtlib (Z &z3, Expr e)
   { return z3.toSmtLib (e); }
 
-
+  template <typename Z, typename M>
+  Expr z3_qe_model_project_skolem (Z &z3, M &model, Expr v, Expr body, ExprMap &map)
+    {
+        z3::context &ctx = z3.get_ctx ();
+        z3::ast b (ctx, z3.toAst (body));
+        std::vector<Z3_app> bound;
+        z3::ast_vector pinned (ctx);
+        z3::ast a (ctx, z3.toAst (v));
+        pinned.push_back (a);
+        bound.push_back (Z3_to_app (ctx, a));
+        assert (a.kind () == Z3_APP_AST);
+        
+        z3::ast_map emap (ctx);
+        
+        z3::ast res (ctx,
+                     Z3_qe_model_project_skolem (ctx, model.get_model (), bound.size (),
+                                                 &bound [0], b, emap));
+        z3::ast_vector keys (emap.get_keys());
+        for (unsigned i = 0; i < keys.size(); i++){
+            map[z3.toExpr(keys[i])] = z3.toExpr(emap.find(keys[i]));
+        }
+        return z3.toExpr (res);
+    }
+    
 }
 
 
@@ -231,6 +279,7 @@ namespace ufo
   {
   private:
     typedef ZContext<M,U> this_type;
+    typedef ZModel<this_type> this_model_type;
     typedef bimap< bimaps::unordered_set_of<Expr>,
 		   bimaps::unordered_set_of<z3::ast,
 					    z3::ast_ptr_hash,
@@ -317,7 +366,9 @@ namespace ufo
     friend class ZSolver<this_type>;
     friend class ZModel<this_type>;
     friend class ZFixedPoint<this_type>;
-
+      
+    friend Expr z3_qe_model_project_skolem<this_type, this_model_type>
+            (this_type &z3, this_model_type &model, Expr v, Expr body, ExprMap &map);
     friend Expr z3_lite_simplify<this_type> (this_type &z3, Expr e);
     friend Expr z3_simplify<this_type> (this_type &z3, Expr e);
     friend Expr z3_forall_elim<this_type> (this_type &z3, Expr e,
@@ -398,6 +449,8 @@ namespace ufo
     
     this_type &operator= (this_type other)
     {swap (*this, other); return *this;}
+      
+    Z3_model &get_model () { return model; }
 
     friend void swap (this_type &src, this_type &dst)
     {
@@ -626,13 +679,13 @@ namespace ufo
     z3::fixedpoint fp;
     ExprFactory &efac;
 
-    ExprVector m_rels;
-    ExprVector m_vars;
-    ExprVector m_rules;
-    ExprVector m_queries;
-
   public:
-
+      
+      ExprVector m_rels;
+      ExprVector m_vars;
+      ExprVector m_rules;
+      ExprVector m_queries;
+      
     ZFixedPoint (Z &z) :
       z3(z), ctx(z.get_ctx ()), fp (z.get_ctx ()), efac(z.get_efac ()) {}
 
@@ -955,7 +1008,37 @@ namespace ufo
           rule = z3::ast (ctx, Z3_get_quantifier_body (ctx, rule));
         res.push_back (z3.toExpr (rule));
       }
-   }
+    }
+      
+    void loadFPfromFile(std::string smt){
+        z3::ast_vector queries (ctx, Z3_fixedpoint_from_file(ctx, fp, smt.c_str ()));
+        ctx.check_error ();
+        
+        z3::ast_vector rules (ctx, Z3_fixedpoint_get_rules(ctx, fp));
+
+        ExprSet relations;
+        for (unsigned i = 0; i < rules.size (); ++i){
+            Expr rule = z3.toExpr (rules [i]);
+            m_rules.push_back(rule);
+            
+            Expr head = rule->arg(rule->arity() - 1)->arg(1);
+            if (isOpX<FAPP>(head)){
+                if (head->arity () > 0){
+                    if (isOpX<FDECL>(head->arg(0))){
+                        relations.insert(head->arg(0));
+                    }
+                }
+            }
+        }
+        
+        for (unsigned i = 0; i < queries.size (); ++i){
+            m_queries.push_back(z3.toExpr (queries [i]));
+        }
+        
+        for (auto &r: relations) m_rels.push_back (r);
+        
+        //TODO: vars
+    }
   };
 
 

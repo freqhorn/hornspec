@@ -28,36 +28,6 @@ include (CTest)
 list (APPEND CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-find_package (Git)
-if (GIT_FOUND)
-  set (SEAHORN_LLVM_REPO "https://github.com/seahorn/llvm-seahorn"
-    CACHE STRING "seahorn-llvm repo")
-  set (DSA_SEAHORN_REPO "https://github.com/seahorn/dsa-seahorn"
-    CACHE STRING "dsa-seahorn repo")
-  set (CRAB_LLVM_REPO "https://github.com/seahorn/crab-llvm"
-    CACHE STRING "crab-llvm repo")
-  add_custom_target (seahorn-llvm-git
-    ${GIT_EXECUTABLE} clone ${SEAHORN_LLVM_REPO} ${CMAKE_SOURCE_DIR}/llvm-seahorn)
-   add_custom_target (dsa-seahorn-git
-    ${GIT_EXECUTABLE} clone ${DSA_SEAHORN_REPO} ${CMAKE_SOURCE_DIR}/dsa-seahorn)
-   add_custom_target (crab-llvm-git
-    ${GIT_EXECUTABLE} clone ${CRAB_LLVM_REPO} ${CMAKE_SOURCE_DIR}/crab-llvm)
-
-
-  #add_custom_target (extra DEPENDS seahorn-llvm-git dsa-seahorn-git)
-  add_custom_target (extra
-    ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_LIST_FILE}
-      DEPENDS seahorn-llvm-git dsa-seahorn-git)
-
-  # XXX: crab-llvm is not publicly available at the moment. Read the README for details.
-  #add_custom_target (extra
-  #  ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_LIST_FILE}
-  #  DEPENDS seahorn-llvm-git dsa-seahorn-git crab-llvm-git)
-
-else()
-  message (STATUS "Could not find git. Not adding 'extra' target.")
-endif()
-
 
 option (SEAHORN_STATIC_EXE "Static executable." OFF)
 
@@ -70,7 +40,7 @@ endif()
 # put static libraries first
 set(CMAKE_FIND_LIBRARY_SUFFIXES ".a" ${CMAKE_FIND_LIBRARY_SUFFIXES})
 
-option (UNIT_TESTS "Compile unit tests" OFF)
+
 set (Boost_USE_STATIC_LIBS ON)
 set (BOOST_COMPONENTS system)
 if (UNIT_TESTS)
@@ -84,7 +54,7 @@ endif ()
 include(ExternalProject)
 set_property(DIRECTORY PROPERTY EP_STEP_TARGETS configure build test)
 
-set (Z3_TAG "origin/spacer" CACHE STRING "Z3 git tag to use")
+set (Z3_TAG "origin/spacer3" CACHE STRING "Z3 git tag to use")
 set (Z3_REPO "https://bitbucket.org/spacer/code.git" CACHE STRING "Z3 repo")
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   set (Z3_DEBUG "-d")
@@ -169,38 +139,6 @@ else()
 
 endif()
 
-set (PACKAGE_NAME SeaHorn)
-set(PACKAGE_STRING "${PACKAGE_NAME} ${PACKAGE_VERSION}")
-
-# Configure CPack.
-include(TargetArch)
-target_architecture(CMAKE_TARGET_ARCH)
-message ("arch: ${CMAKE_TARGET_ARCH}")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "SeaHorn")
-set(CPACK_PACKAGE_VENDOR "SeaHorn")
-set(CPACK_PACKAGE_VERSION_MAJOR ${SeaHorn_VERSION_MAJOR})
-set(CPACK_PACKAGE_VERSION_MINOR ${SeaHorn_VERSION_MINOR})
-set(CPACK_PACKAGE_VERSION_PATCH ${SeaHorn_VERSION_PATCH})
-set(CPACK_PACKAGE_VERSION ${PACKAGE_VERSION})
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/license.txt")
-set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
-set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
-if(CMAKE_BUILD_TYPE STREQUAL Release)
-  set(CPACK_PACKAGE_FILE_NAME
-    "${CMAKE_PROJECT_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_TARGET_ARCH}")
-else()
-  set(CPACK_PACKAGE_FILE_NAME
-    "${CMAKE_PROJECT_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_TARGET_ARCH}-${CMAKE_BUILD_TYPE}")
-endif()
-if(WIN32 AND NOT UNIX)
-  set(CPACK_NSIS_MODIFY_PATH "ON")
-  set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL "ON")
-  set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
-    "ExecWait '$INSTDIR/tools/msbuild/install.bat'")
-  set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
-    "ExecWait '$INSTDIR/tools/msbuild/uninstall.bat'")
-endif()
-include(CPack)
 
 install (FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.md DESTINATION .)
 # install all the licenses
@@ -214,12 +152,6 @@ if (EXISTS z3-prefix/src/z3/LICENSE.txt)
     ${CMAKE_CURRENT_BINARY_DIR}/z3-prefix/src/z3/LICENSE.txt
     DESTINATION share/doc/seahorn
     RENAME z3_license.txt)
-endif()
-
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ext/llvm/LICENSE.TXT)
-  install (FILES ext/llvm/LICENSE.TXT
-    DESTINATION share/doc/seahorn
-    RENAME llvm_license.txt)
 endif()
 
 if (EXISTS ${CMAKE_CURRENT_BINARY_DIR}/llvm-prefix/src/llvm-build/bin/clang-3.6)
@@ -240,44 +172,6 @@ if (EXISTS ${CMAKE_CURRENT_BINARY_DIR}/z3-prefix/src/z3/build)
   install(FILES ${z3py} DESTINATION lib/z3py)
 endif()
 
-if (EXISTS ${CMAKE_CURRENT_BINARY_DIR}/crab/src/crab/Ikos_LICENSE.pdf)
-  install (
-    FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/crab/src/crab/Ikos_LICENSE.pdf
-    DESTINATION share/doc/seahorn
-    RENAME ikos_license.pdf)
-endif()
-
-if (EXISTS ${CMAKE_CURRENT_BINARY_DIR}/crab/src/crab/Crab_LICENSE.txt)
-  install (
-    FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/crab/src/crab/Crab_LICENSE.txt
-    DESTINATION share/doc/seahorn
-    RENAME crab_license.txt)
-endif()
-
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/crab-llvm/LICENSE.txt)
-  install (FILES crab-llvm/LICENSE.txt
-    DESTINATION share/doc/seahorn
-    RENAME crab_llvm_license.txt)
-endif()
-
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/share/seahorn.h)
-  install (FILES share/seahorn.h
-    DESTINATION share/)
-  install (FILES share/seahorn.c
-    DESTINATION share/)
-endif()
-
-# check for rt lib. Not needed on OSX.
-find_library(RT_LIB NAMES rt)
-if (NOT RT_LIB)
-  set(RT_LIB "")
-endif()
-mark_as_advanced(RT_LIB)
-
-find_package(Curses)
-
 find_package(Gmp REQUIRED)
 if (GMP_FOUND)
   include_directories (${GMP_INCLUDE_DIR})
@@ -286,9 +180,6 @@ else()
   set(GMP_LIB "")
   set(GMPXX_LIB "")
 endif()
-
-find_package(OpenMP)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 
 install(DIRECTORY include/
   DESTINATION include
@@ -309,7 +200,6 @@ install(DIRECTORY ${CMAKE_BINARY_DIR}/include/
   PATTERN ".svn" EXCLUDE
   )
 
-
 set(CMAKE_CXX_EXTENSIONS ON)
 add_definitions(-Wno-redeclared-class-member -Wno-sometimes-uninitialized)
 add_definitions(-Wno-covered-switch-default)
@@ -321,66 +211,10 @@ endif ()
 # add the include directory from the build tree
 include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR}/include)
 
-if (IS_DIRECTORY ${CMAKE_SOURCE_DIR}/dsa-seahorn AND
-    EXISTS ${CMAKE_SOURCE_DIR}/dsa-seahorn/lib/DSA/Steensgaard.cpp)
-  include_directories (AFTER dsa-seahorn/include)
-  add_subdirectory (dsa-seahorn/lib/AssistDS)
-  add_subdirectory (dsa-seahorn/lib/DSA)
-  set (DSA_LIBS DSA AssistDS)
-  set (HAVE_DSA TRUE)
-else()
-  message (WARNING "No DSA found in ${CMAKE_SOURCE_DIR}/dsa-seahorn")
-  set (DSA_LIBS "")
-endif()
-
-if (IS_DIRECTORY ${CMAKE_SOURCE_DIR}/llvm-seahorn AND
-    EXISTS ${CMAKE_SOURCE_DIR}/llvm-seahorn/lib/CMakeLists.txt)
-  include_directories (BEFORE llvm-seahorn/include)
-  add_subdirectory(llvm-seahorn/lib)
-  add_subdirectory(llvm-seahorn/tools)
-  set (HAVE_LLVM_SEAHORN TRUE)
-  set (LLVM_SEAHORN_LIBS SeaInstCombine)
-else()
-  message (WARNING "No LLVM-SEAHORN found in ${CMAKE_SOURCE_DIR}/llvm-seahorn")
-endif()
-
-if (IS_DIRECTORY ${CMAKE_SOURCE_DIR}/crab-llvm AND
-    EXISTS ${CMAKE_SOURCE_DIR}/crab-llvm/CMakeLists.txt)
-  add_subdirectory(crab-llvm)
-  if (NOT CRAB_FOUND)
-    return()
-  else()
-    include_directories (${CRAB_INCLUDE_DIR})
-    # optional external libraries used by Crab
-    # these include dirs are optionally defined by Crab-Llvm
-    include_directories (${LDD_INCLUDE_DIR})
-    include_directories (${APRON_INCLUDE_DIR})
-  endif()
-endif()
-
-if (DEFINED CrabLlvm_SOURCE_DIR)
-  include_directories (BEFORE ${CrabLlvm_SOURCE_DIR}/include)
-  add_subdirectory (${CrabLlvm_SOURCE_DIR}/lib/CrabLlvm)
-  message (STATUS "Using crab-llvm from: ${CrabLlvm_SOURCE_DIR}/lib/CrabLlvm")
-  set (HAVE_CRAB TRUE)
-  set (HAVE_CRAB_LLVM TRUE)
-endif()
-
 ### add our include directories to the front, overriding directories
 ### specified by external packages.
 include_directories(BEFORE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_BINARY_DIR}/include)
 
-add_subdirectory(lib)
 add_subdirectory(tools)
-if (UNIT_TESTS)
-  add_subdirectory(units)
-endif()
-add_subdirectory(sea-rt)
-
-configure_file( include/seahorn/config.h.cmake
-                ${CMAKE_BINARY_DIR}/include/seahorn/config.h )
-
-add_subdirectory(py)
-add_subdirectory(test)
