@@ -322,7 +322,8 @@ namespace ufo
         // for the query: add a negation of the entire non-recursive part:
         if (hr.isQuery)
         {
-          Expr massaged = unfoldITE(mkNeg(hr.body));
+          Expr massaged = propagateEqualities(hr.body);
+          massaged = unfoldITE(mkNeg(massaged));
           massaged = convertToGEandGT(massaged);
           populateArityAndTemplates(massaged);
         }

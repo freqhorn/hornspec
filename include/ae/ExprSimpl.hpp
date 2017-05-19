@@ -1567,6 +1567,107 @@ namespace ufo
       intConsts.insert(lexical_cast<int> (ex->right()));
     }
   }
+  
+  inline static bool isSymmetric (Expr exp)
+  {
+    return isOpX<EQ>(exp);
+  }
+  
+  template <typename T> static void computeTransitiveClosure(ExprSet& r, ExprSet& tr)
+  {
+    for (auto &a : r)
+    {
+      if (isOpX<T>(a))
+      {
+        for (auto &b : tr)
+        {
+          if (isOpX<T>(b))
+          {
+            if (a->left() == b->right()) tr.insert(mk<T>(b->left(), a->right()));
+            if (b->left() == a->right()) tr.insert(mk<T>(a->left(), b->right()));
+            
+            if (isSymmetric(a))
+            {
+              if (a->left()  == b->left())  tr.insert(mk<T>(a->right(), b->right()));
+              if (a->right() == b->right()) tr.insert(mk<T>(a->left(),  b->left()));
+            }
+          }
+        }
+      }
+      tr.insert(a);
+    }
+  }
+  
+  struct TransClAdder
+  {
+    TransClAdder () {};
+    
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<AND>(exp))
+      {
+        ExprSet cnjs;
+        ExprSet trCnjs;
+        getConj(exp, cnjs);
+        computeTransitiveClosure<EQ>(cnjs, trCnjs);
+        computeTransitiveClosure<LEQ>(cnjs, trCnjs);
+        computeTransitiveClosure<GEQ>(cnjs, trCnjs);
+        computeTransitiveClosure<LT>(cnjs, trCnjs);
+        computeTransitiveClosure<GT>(cnjs, trCnjs);
+        return conjoin(trCnjs, exp->getFactory());
+      }
+      
+      return exp;
+    }
+  };
+  
+  inline static Expr enhanceWithMoreClauses (Expr exp)
+  {
+    RW<TransClAdder> tr(new TransClAdder());
+    return dagVisit (tr, exp);
+  }
+  
+  inline static Expr propagateEqualities (Expr exp)
+  {
+    ExprSet cnjs;
+    ExprSet newCnjs;
+    ExprSet eqs;
+    ExprSet trEqs;
+    
+    getConj(exp, cnjs);
+    
+    for (auto &a : cnjs) if (isOpX<EQ>(a)) eqs.insert(a);
+    if (eqs.size() == 0) return exp;
+    
+    computeTransitiveClosure<EQ>(eqs, trEqs);
+    
+    for (auto &a : cnjs)
+    {
+      if (isOpX<EQ>(a))
+      {
+        newCnjs.insert(a);
+      }
+      else
+      {
+        Expr neg = mkNeg(a);
+        for (auto &b : trEqs)
+        {
+          Expr repl1 = replaceAll(neg, b->left(), b->right());
+          Expr repl2 = replaceAll(neg, b->right(), b->left());
+          bool eq1 = (repl1 == neg);
+          bool eq2 = (repl2 == neg);
+          bool eq3 = (repl2 == repl1);
+          
+          if (eq1 && eq2 && eq3) newCnjs.insert(a);
+          else if (eq1) newCnjs.insert (mk<NEG> (mk<AND>(neg, repl2)));
+          else if (eq2) newCnjs.insert (mk<NEG> (mk<AND>(neg, repl1)));
+          else newCnjs.insert(mk<NEG> (mk<AND>(neg, mk<AND>(repl1, repl2))));
+        }
+      }
+    }
+    
+    return conjoin(newCnjs, exp->getFactory());
+  }
 }
 
 #endif
