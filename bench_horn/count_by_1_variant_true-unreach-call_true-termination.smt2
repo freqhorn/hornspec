@@ -7,7 +7,7 @@
 (rule (=>
   (and
     (= i 0)
-    (not (= i LRG))
+    (< i LRG)
   )
   (itp i LRG)
 ))
@@ -16,7 +16,7 @@
   (and
     (itp i_ LRG)
     (= i (+ 1 i_))
-    (not (= i LRG))
+    (< i LRG)
   )
   (itp i LRG)
 ))

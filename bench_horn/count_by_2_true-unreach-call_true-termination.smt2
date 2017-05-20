@@ -5,7 +5,9 @@
 (declare-rel fail ())
 
 (rule (=>
+(and
   (= i 0)
+  (= LRG 256))  ; LARGE_INT is large and a power of 2
   (itp i LRG)
 ))
 
@@ -23,7 +25,6 @@
     (itp i LRG)
     (>= i LRG)  ; stop condition (redun.)
     (not (= i LRG))  ; assert negation
-    (= LRG 256)  ; LARGE_INT is large and a power of 2
   ) fail))
 
 (query fail :print-certificate true)

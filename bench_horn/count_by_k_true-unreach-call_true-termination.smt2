@@ -7,7 +7,8 @@
 
 (rule (=>
   (and
-    (and (<= 0 k) (<= k 10))
+    (and (<= 0 k) (<= k 10) )
+    (= LRG 256)  ; LARGE_INT is large and a power of 2
     (= i 0)
   )
   (itp i k LRG)
@@ -27,7 +28,6 @@
     (itp i k LRG)
     (not (< i (* LRG k)))  ; stop cond. (redun.)
     (not (= i (* LRG k)))  ; assert negation
-    (= LRG 256)  ; LARGE_INT is large and a power of 2
   )
   fail
 ))
