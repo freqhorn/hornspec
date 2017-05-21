@@ -152,8 +152,15 @@ namespace ufo
       
       term = rewriteMultAdd(term);
       
-      term = findNonlinAndRewrite(term, hr.srcVars, invVars, extraVars);
-      term = findNonlinAndRewrite(term, hr.dstVars, invVars, extraVars);
+      if (hr.srcRelation == invDecl->first())
+      {
+        term = findNonlinAndRewrite(term, hr.srcVars, invVars, extraVars);
+      }
+      
+      if (hr.dstRelation == invDecl->first())
+      {
+        term = findNonlinAndRewrite(term, hr.dstVars, invVars, extraVars);
+      }
       
       for (auto &a : extraVars) actualVars.insert(a.second);
 
@@ -161,10 +168,21 @@ namespace ufo
       if (actualVars.size() == 0 || isTautology(term)) return;
             
       // split each term to two samples (for srcVars and dstVars)
-      addSampleHlp(term, hr.srcVars, actualVars);
-      addSampleHlp(term, hr.dstVars, actualVars);
+
+      if (hr.srcRelation == invDecl->first())
+      {
+        addSampleHlp(term, hr.srcVars, actualVars);
+      }
       
-      processTransition(term, hr.srcVars, hr.dstVars, actualVars);
+      if (hr.dstRelation == invDecl->first())
+      {
+        addSampleHlp(term, hr.dstVars, actualVars);
+      }
+    
+      if (hr.dstRelation == hr.srcRelation)
+      {
+        processTransition(term, hr.srcVars, hr.dstVars, actualVars);
+      }
     }
     
     void populateArityAndTemplates(Expr term)
