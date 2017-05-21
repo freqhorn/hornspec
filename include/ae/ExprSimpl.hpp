@@ -1238,7 +1238,7 @@ namespace ufo
     }
     else if (isOpX<NEG>(term))
     {
-      return mk<NEG>(unfoldITE(term->last()));
+      return mkNeg(unfoldITE(term->last()));
     }
     else if (isOpX<AND>(term) || isOpX<OR>(term))
     {
