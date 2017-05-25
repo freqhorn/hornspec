@@ -906,8 +906,6 @@ namespace ufo
     return dagVisit (mu, exp);
   }
   
-  inline static Expr reBuildBin(Expr term, Expr lhs, Expr rhs);
-  
   struct FindNonlinAndRewrite
   {
     ExprVector& vars;
@@ -954,7 +952,11 @@ namespace ufo
       {
         int indl = getVarIndex(t->left(), vars);
         int indr = getVarIndex(t->right(), vars);
-        Expr key = reBuildBin(t, vars2[indl], vars2[indr]);
+
+        Expr key = t;
+        if (indl >= 0) key = replaceAll(key, t->left(), vars2[indl]);
+        if (indr >= 0) key = replaceAll(key, t->right(), vars2[indr]);
+
         if (extraVars[key] == NULL)
         {
           Expr new_name = mkTerm<string> ("__e__" + to_string(extraVars.size()), t->getFactory());
@@ -1128,26 +1130,6 @@ namespace ufo
     }
     assert(isOpX<GT>(term));
     return mk<GT>(lhs, rhs);
-  }
-  
-  // not very pretty method, but..
-  inline static Expr reBuildBin(Expr term, Expr lhs, Expr rhs)
-  {
-    if (isOpX<DIV>(term))
-    {
-      return mk<DIV>(lhs, rhs);
-    }
-    if (isOpX<IDIV>(term))
-    {
-      return mk<IDIV>(lhs, rhs);
-    }
-    if (isOpX<MOD>(term))
-    {
-      return mk<MOD>(lhs, rhs);
-    }
-    
-    assert(0);
-    return term;
   }
   
   inline static Expr reBuildNegCmp(Expr term, Expr lhs, Expr rhs)
