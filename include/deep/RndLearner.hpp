@@ -389,12 +389,20 @@ namespace ufo
             break;
           }
 
-          if (isTautology(cand) || !u.isSat(cand))  // keep searching
+          if (isTautology(cand))  // keep searching
           {
-            lf.assignPrioritiesForGarbage(lf.samples.back());
+            lf.assignPrioritiesForLearnt(lf.samples.back());
             skip = true;
             break;
           }
+
+          if (lf.nonlinVars.size() > 0 && !u.isSat(cand))  // keep searching
+          {
+            lf.assignPrioritiesForFailed(lf.samples.back());
+            skip = true;
+            break;
+          }
+
           curCandidates[j] = cand;
         }
         
