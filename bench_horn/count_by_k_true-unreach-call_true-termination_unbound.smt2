@@ -7,8 +7,9 @@
 
 (rule (=>
   (and
-    (and (<= 0 k) (<= k 10) )
-    (= LRG 256)  ; LARGE_INT is large and a power of 2
+    (<= 0 k)
+    (<= k 10)
+    (>= LRG 0) 
     (= i 0)
   )
   (itp i k LRG)
