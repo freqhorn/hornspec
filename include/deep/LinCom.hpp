@@ -1009,6 +1009,8 @@ namespace ufo
     
     void assignPrioritiesForFailed(LAdisj& failed)
     {
+      if (!aggressivepruning) return;
+
       vector<LAdisj> eqs;
       getEquivalentFormulas(failed, eqs);
       for (auto &a : eqs) prioritiesFailed (a);

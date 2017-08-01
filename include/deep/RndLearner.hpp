@@ -131,25 +131,29 @@ namespace ufo
       }
 
       bool res = false;
-      for (int ind2 = 0; ind2 < invNumber; ind2++)
+      for (auto &cand : curCandidates) res = !isOpX<TRUE>(cand);
+      return res;
+    }
+    
+    void assignPriorities()
+    {
+      for (int i = 0; i < invNumber; i++)
       {
-        Expr cand2 = curCandidates[ind2];
-        LAfactory& lf2 = lfs[ind2].back();
-        if (isOpX<TRUE>(cand2))
+        Expr cand = curCandidates[i];
+        LAfactory& lf = lfs[i].back();
+        if (isOpX<TRUE>(cand))
         {
-          outs () << "    => bad candidate for " << *decls[ind2] << "\n";
-          if (aggressivepruning) lf2.assignPrioritiesForFailed(lf2.samples.back());
+          outs () << "    => bad candidate for " << *decls[i] << "\n";
+          lf.assignPrioritiesForFailed(lf.samples.back());
         }
         else
         {
-          outs () << "    => learnt lemma for " << *decls[ind2] << "\n";
-          lf2.assignPrioritiesForLearnt(lf2.samples.back());
-          lf2.learntExprs.insert(cand2);
-          lf2.learntLemmas.push_back(lf2.samples.size() - 1);
-          res = true;
+          outs () << "    => learnt lemma for " << *decls[i] << "\n";
+          lf.assignPrioritiesForLearnt(lf.samples.back());
+          lf.learntExprs.insert(cand);
+          lf.learntLemmas.push_back(lf.samples.size() - 1);
         }
       }
-      return res;
     }
     
     bool checkSafety()
@@ -219,6 +223,7 @@ namespace ufo
                 lemma2add = replaceAll(lemma2add, lf.getVarE(i), hr.srcVars[i]);
               }
 
+              all++;
               if (u.isImplies(hr.body, lemma2add)) continue;
 
               hr.lin.push_back(lemma2add);
@@ -484,13 +489,12 @@ namespace ufo
             success = true;
             break;
           }
-          else
-          {
-            updateRels();
-          }
         }
 
-        for (int j = 0; j < invNumber; j++)  curCandidates[j] = NULL; // preparing for the next iteration
+        assignPriorities();
+        updateRels();
+
+        for (auto &cand : curCandidates) cand = NULL; // preparing for the next iteration
       }
       
       if (success) outs () << "\n -----> Success after " << --iter      << " iterations\n";
