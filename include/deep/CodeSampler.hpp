@@ -21,14 +21,14 @@ namespace ufo
     set<int> intCoefs;
     
     HornRuleExt& hr;
-    Expr invDecl;
+    Expr invRel;
     ExprVector invVars;
     ExprMap& extraVars;
     
     Expr zero;
     
     CodeSampler(HornRuleExt& r, Expr& d, ExprVector& v, ExprMap& e) :
-      hr(r), invDecl(d), invVars(v), extraVars(e)
+      hr(r), invRel(d), invVars(v), extraVars(e)
     {
       // add some "universal" constants
       intConsts.insert(0);
@@ -36,7 +36,7 @@ namespace ufo
       intConsts.insert(-1);
       
       // aux Expr const
-      zero = mkTerm (mpz_class (0), invDecl->getFactory());
+      zero = mkTerm (mpz_class (0), invRel->getFactory());
     };
     
     void addSampleHlp(Expr tmpl, ExprVector& vars, ExprSet& actualVars)
@@ -152,12 +152,12 @@ namespace ufo
       
       term = rewriteMultAdd(term);
       
-      if (hr.srcRelation == invDecl->first())
+      if (hr.srcRelation == invRel)
       {
         term = findNonlinAndRewrite(term, hr.srcVars, invVars, extraVars);
       }
       
-      if (hr.dstRelation == invDecl->first())
+      if (hr.dstRelation == invRel)
       {
         term = findNonlinAndRewrite(term, hr.dstVars, invVars, extraVars);
       }
@@ -169,12 +169,12 @@ namespace ufo
             
       // split each term to two samples (for srcVars and dstVars)
 
-      if (hr.srcRelation == invDecl->first())
+      if (hr.srcRelation == invRel)
       {
         addSampleHlp(term, hr.srcVars, actualVars);
       }
       
-      if (hr.dstRelation == invDecl->first())
+      if (hr.dstRelation == invRel)
       {
         addSampleHlp(term, hr.dstVars, actualVars);
       }

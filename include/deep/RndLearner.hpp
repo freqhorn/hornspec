@@ -25,9 +25,8 @@ namespace ufo
     
     CHCs& ruleManager;
     vector<Expr> decls;
-    vector<LAfactory> lfs;
+    vector<vector<LAfactory>> lfs;
     vector<Expr> curCandidates;
-    map<int, int> incomNum;
     int invNumber;
     int all;
 
@@ -94,7 +93,7 @@ namespace ufo
         if (!isOpX<TRUE>(hr.srcRelation))
         {
           ind1 = getVarIndex(hr.srcRelation, decls);
-          LAfactory& lf1 = lfs[ind1];
+          LAfactory& lf1 = lfs[ind1].back();
           
           cand1 = curCandidates[ind1];
           for (int i = 0; i < hr.srcVars.size(); i++)
@@ -113,7 +112,7 @@ namespace ufo
         
         // pushing dst relation
         cand2 = curCandidates[ind2];
-        LAfactory& lf2 = lfs[ind2];
+        LAfactory& lf2 = lfs[ind2].back();
     
         for (int i = 0; i < hr.dstVars.size(); i++)
         {
@@ -132,10 +131,10 @@ namespace ufo
       }
 
       bool res = false;
-      for (int ind2 = 0; ind2 < curCandidates.size(); ind2++)
+      for (int ind2 = 0; ind2 < invNumber; ind2++)
       {
         Expr cand2 = curCandidates[ind2];
-        LAfactory& lf2 = lfs[ind2];
+        LAfactory& lf2 = lfs[ind2].back();
         if (isOpX<TRUE>(cand2))
         {
           outs () << "    => bad candidate for " << *decls[ind2] << "\n";
@@ -165,7 +164,7 @@ namespace ufo
         Expr invApp = curCandidates[ind];
         if (safety_progress[num-1] == true) continue;
 
-        LAfactory& lf = lfs[ind];
+        LAfactory& lf = lfs[ind].back();
 
         for (int i = 0; i < hr.srcVars.size(); i++)
         {
@@ -196,6 +195,69 @@ namespace ufo
       }
     }
     
+    void updateRels()
+    {
+      // this should not affect the learning process for a CHC system with one (declare-rel ...)
+
+      set<int> rels2update;
+
+      for (int ind = 0; ind < invNumber; ind++)
+      {
+        Expr cand = curCandidates[ind];
+        LAfactory& lf = lfs[ind].back();
+        if (!isOpX<TRUE>(cand))
+        {
+          for (auto &hr : ruleManager.chcs)
+          {
+            if ( hr.srcRelation == decls[ind] &&
+                hr.dstRelation != decls[ind] &&
+                !hr.isQuery)
+            {
+              Expr lemma2add = curCandidates[ind];
+              for (int i = 0; i < hr.srcVars.size(); i++)
+              {
+                lemma2add = replaceAll(lemma2add, lf.getVarE(i), hr.srcVars[i]);
+              }
+
+              if (u.isImplies(hr.body, lemma2add)) continue;
+
+              hr.lin.push_back(lemma2add);
+              hr.body = mk<AND>(hr.body, lemma2add);
+
+              rels2update.insert(getVarIndex(hr.dstRelation, decls));
+            }
+          }
+        }
+      }
+
+      for(auto ind : rels2update)
+      {
+        vector<LAfactory>& lf = lfs[ind];
+        lf.push_back(LAfactory (m_efac, densecode, aggressivepruning));
+        LAfactory& lf_before = lf[lf.size()-2];
+        LAfactory& lf_after = lf.back();
+
+        for (auto a : lf_before.getVars())
+        {
+          lf_after.addVar(a);
+        }
+
+        doCodeSampling(decls[ind], lf_after);
+
+        for (auto a : lf_before.learntExprs)
+        {
+          lf_after.learntExprs.insert(a);
+          lf_after.samples.push_back(LAdisj());
+          LAdisj& lcs = lf_after.samples.back();
+          if (lf_after.exprToLAdisj(a, lcs))
+          {
+            lf_after.assignPrioritiesForLearnt(lcs);
+            lf_after.learntLemmas.push_back (lf_after.samples.size() - 1);
+          }
+        }
+      }
+    }
+
     void initializeDecl(Expr invDecl)
     {
       assert (invDecl->arity() > 2);
@@ -204,17 +266,11 @@ namespace ufo
       assert(curCandidates.size() == invNumber);
       
       decls.push_back(invDecl->arg(0));
-      lfs.push_back(LAfactory(m_efac, densecode, aggressivepruning));  // indeces at decls, lfs, and curCandidates should be the same
       curCandidates.push_back(NULL);
       
-      LAfactory& lf = lfs.back();
-      
-      // collect how many rules has invDecl on the right side
-      for (auto &hr : ruleManager.chcs)
-      {
-        if (hr.dstRelation == decls.back())
-        incomNum[invNumber]++;
-      }
+      lfs.push_back(vector<LAfactory> ());
+      lfs.back().push_back(LAfactory (m_efac, densecode, aggressivepruning));
+      LAfactory& lf = lfs.back().back();
       
       invNumber++;
       
@@ -225,6 +281,11 @@ namespace ufo
         lf.addVar(var);
       }
       
+      doCodeSampling (decls.back(), lf);
+    }
+
+    void doCodeSampling(Expr invRel, LAfactory& lf)
+    {
       vector<CodeSampler> css;
       set<int> orArities;
       set<int> progConstsTmp;
@@ -234,9 +295,9 @@ namespace ufo
       // analize each rule separately:
       for (auto &hr : ruleManager.chcs)
       {
-        if (hr.dstRelation != decls.back() && hr.srcRelation != decls.back()) continue;
+        if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
         
-        css.push_back(CodeSampler(hr, invDecl, lf.getVars(), lf.nonlinVars));
+        css.push_back(CodeSampler(hr, invRel, lf.getVars(), lf.nonlinVars));
         css.back().analyzeCode(densecode, shrink);
         
         // convert intConsts to progConsts and add additive inverses (if applicable):
@@ -364,7 +425,7 @@ namespace ufo
           }
         }
 
-        outs() << "\nStatistics for " << *decls.back() << ":\n";
+        outs() << "\nStatistics for " << *invRel << ":\n";
         lf.printCodeStatistics(orArities);
       }
     }
@@ -384,7 +445,7 @@ namespace ufo
         for (int j = 0; j < invNumber; j++)
         {
           if (curCandidates[j] != NULL) continue;   // if the current candidate is good enough
-          LAfactory& lf = lfs[j];
+          LAfactory& lf = lfs[j].back();
           Expr cand = lf.getFreshCandidate();
           if (cand == NULL)
           {
@@ -423,8 +484,12 @@ namespace ufo
             success = true;
             break;
           }
+          else
+          {
+            updateRels();
+          }
         }
-            
+
         for (int j = 0; j < invNumber; j++)  curCandidates[j] = NULL; // preparing for the next iteration
       }
       
@@ -452,12 +517,12 @@ namespace ufo
       outs() << "WARNING: learning multiple invariants is currently unstable\n"
              << "         it is suggested to disable \'aggressivepruning\'\n";
     }
-    
+
     for (auto& dcl: ruleManager.decls)
     {
       ds.initializeDecl(dcl);
     }
-  
+
     ds.synthesize(maxAttempts);
   };
 }
