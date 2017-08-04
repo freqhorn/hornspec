@@ -13,37 +13,37 @@ namespace ufo
     ExprVector srcVars;
     ExprVector dstVars;
     ExprVector locVars;
-    
+
     ExprVector lin;
     Expr body;           // conjunction of lin
     Expr head;
-    
+
     Expr srcRelation;
     Expr dstRelation;
-    
+
     bool isFact;
     bool isQuery;
     bool isInductive;
-    
+
     string suffix;
   };
-  
+
   class CHCs
   {
     private:
-    
+
     ExprFactory &m_efac;
     EZ3 &m_z3;
-    
-    Expr failDecl;
-    
+
     public:
-    
+
+    Expr failDecl;
     vector<HornRuleExt> chcs;
     ExprSet decls;
-    
+    map<Expr, vector<int>> outgs;
+
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
- 
+
     void preprocess (Expr term, ExprSet& srcVars, ExprVector& relations, Expr &srcRelation, ExprVector& lin)
     {
       if (isOpX<AND>(term))
@@ -78,7 +78,7 @@ namespace ufo
         }
       }
     }
-    
+
     void parse(string smt)
     {
       std::unique_ptr<ufo::ZFixedPoint <EZ3> > m_fp;
@@ -94,7 +94,7 @@ namespace ufo
       {
         if (a->arity() == 2)
         {
-          failDecl = a;
+          failDecl = a->arg(0);
         }
         else
         {
@@ -141,18 +141,16 @@ namespace ufo
         Expr head = rule->arg(1);
         
         hr.head = head->arg(0);
-        
         hr.dstRelation = head->arg(0)->arg(0);
 
         ExprSet srcVars;
-        
         preprocess(body, srcVars, fp.m_rels, hr.srcRelation, hr.lin);
         
         hr.isFact = isOpX<TRUE>(hr.srcRelation);
-        hr.isQuery = (hr.dstRelation == failDecl->arg(0));
+        hr.isQuery = (hr.dstRelation == failDecl);
         hr.isInductive = (hr.srcRelation == hr.dstRelation);
-        
         hr.body = conjoin(hr.lin, m_efac);
+        outgs[hr.srcRelation].push_back(chcs.size()-1);
         
         for (auto &a : srcVars) hr.srcVars.push_back(a);
         
@@ -182,7 +180,7 @@ namespace ufo
         }
       }
     }
-    
+
     void print()
     {
       int num = 0;
