@@ -31,15 +31,14 @@ namespace ufo
     int all;
 
     bool densecode;           // catch various statistics about the code (mostly, frequences) and setup the prob.distribution based on them
-    bool shrink;              // consider only a small subset of int constants and samples from the code
     bool aggressivepruning;   // aggressive pruning of the search space based on SAT/UNSAT (WARNING: may miss some invariants)
     
   public:
     
-    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool b1, bool b2, bool b3) :
+    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool b1, bool b2) :
       m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac),
       invNumber(0), all(0),
-      densecode(b1), shrink(b2), aggressivepruning(b3) {}
+      densecode(b1), aggressivepruning(b2) {}
     
     bool isTautology (Expr a)     // adjusted for big disjunctions
     {
@@ -84,7 +83,6 @@ namespace ufo
 
         // pushing body
         m_smt_solver.assertExpr (hr.body);
-        
         Expr cand1;
         Expr cand2;
         Expr lmApp;
@@ -303,7 +301,7 @@ namespace ufo
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
         
         css.push_back(CodeSampler(hr, invRel, lf.getVars(), lf.nonlinVars));
-        css.back().analyzeCode(densecode, shrink);
+        css.back().analyzeCode(densecode);
         
         // convert intConsts to progConsts and add additive inverses (if applicable):
         for (auto &a : css.back().intConsts)
@@ -505,14 +503,14 @@ namespace ufo
   };
   
   
-  inline void learnInvariants(string smt, int maxAttempts, bool b1=true, bool b2=true, bool b3=true)
+  inline void learnInvariants(string smt, int maxAttempts, bool b1=true, bool b2=true)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
     
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    RndLearner ds(m_efac, z3, ruleManager, b1, b2, b3);
+    RndLearner ds(m_efac, z3, ruleManager, b1, b2);
 
     ds.setupSafetySolver();
 

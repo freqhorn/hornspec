@@ -15,14 +15,11 @@ int main (int argc, char ** argv)
   
   bool densecode = true;           //default
   if (argc > 3) densecode = atoi(argv[2]);
-  
-  bool shrink = true;              //default
-  if (argc > 4) shrink = atoi(argv[3]);
 
   bool aggressivepruning = true;   //default
-  if (argc > 5) aggressivepruning = atoi(argv[4]);
+  if (argc > 4) aggressivepruning = atoi(argv[3]);
   
-  learnInvariants(string(argv[argc-1]), maxAttempts, densecode, shrink, aggressivepruning);
+  learnInvariants(string(argv[argc-1]), maxAttempts, densecode, aggressivepruning);
 
   return 0;
 }
