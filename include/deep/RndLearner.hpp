@@ -284,10 +284,10 @@ namespace ufo
         lf.addVar(var);
       }
       
-      doCodeSampling (decls.back(), lf);
+      doCodeSampling (decls.back(), lf, true);
     }
 
-    void doCodeSampling(Expr invRel, LAfactory& lf)
+    void doCodeSampling(Expr invRel, LAfactory& lf, bool print=false)
     {
       vector<CodeSampler> css;
       set<int> orArities;
@@ -318,11 +318,14 @@ namespace ufo
         }
       }
       
-      outs() << "Multed vars: ";
-      for (auto &a : lf.nonlinVars)
+      if (print && lf.nonlinVars.size() > 0)
       {
-        outs() << *a.first << " = " << *a.second << "\n";
-        lf.addVar(a.second);
+        outs() << "Multed vars: ";
+        for (auto &a : lf.nonlinVars)
+        {
+          outs() << *a.first << " = " << *a.second << "\n";
+          lf.addVar(a.second);
+        }
       }
       
       for (auto &a : intCoefs) if (a != 0) lf.addIntCoef(a);
@@ -381,32 +384,26 @@ namespace ufo
       
       if (densecode)
       {
-        int multip = PRIORSTEP;                 // will add +PRIORSTEP to every occurrence
-        
-        // or, alternatively multip can depend on the type of CHC:
-        //        if (cs.hr.isFact) multip = 1;
-        //        else if (cs.hr.isQuery) multip = 2 * PRIORSTEP;
-        //        else multip = PRIORSTEP;
+        // collect number of occurrences....
+
         for (auto &lcs : lcss)
         {
           int ar = lcs.arity;
-          // specify weights for OR arity
-          lf.orAritiesDensity[ar] += multip;
+
+          // of arities of application of OR
+          lf.orAritiesDensity[ar] ++;
           
-          for (int i = 0; i < ar; i++)
+          for (auto & lc : lcs.dstate)
           {
-            LAterm& lc = lcs.dstate[i];
+            // of arities of application of PLUS
+            lf.plusAritiesDensity[ar][lc.arity] ++;
             
-            // specify weights for PLUS arity
-            lf.plusAritiesDensity[ar][lc.arity] += multip;
+            // of constants
+            lf.intConstDensity[ar][lc.intconst] ++;
             
-            // specify weights for const
-            lf.intConstDensity[ar][lc.intconst] += multip;
+            // of comparison operations
+            lf.cmpOpDensity[ar][lc.cmpop] ++;
             
-            // specify weights for comparison operation
-            lf.cmpOpDensity[ar][lc.cmpop] += multip;
-            
-            // specify weights for var combinations
             set<int> vars;
             int vars_id = -1;
             for (int j = 0; j < lc.vcs.size(); j = j+2) vars.insert(lc.vcs[j]);
@@ -419,17 +416,24 @@ namespace ufo
               }
             }
             assert(vars_id >= 0);
-            lf.varDensity[ar][lc.arity][vars_id] += multip;
-            
+
+            // of variable combinations
+            lf.varDensity[ar][lc.arity][vars_id] ++;
+
+            // of variable coefficients
             for (int j = 1; j < lc.vcs.size(); j = j+2)
             {
-              lf.coefDensity[ ar ][ lc.vcs [j-1] ] [lc.vcs [j] ] += multip;
+              lf.coefDensity[ ar ][ lc.vcs [j-1] ] [lc.vcs [j] ] ++;
             }
           }
         }
 
-        outs() << "\nStatistics for " << *invRel << ":\n";
-        lf.printCodeStatistics(orArities);
+        lf.stabilizeDensities(orArities);
+        if (print)
+        {
+          outs() << "\nStatistics for " << *invRel << ":\n";
+          lf.printCodeStatistics(orArities);
+        }
       }
     }
     
@@ -438,8 +442,6 @@ namespace ufo
       bool success = false;
       int iter = 1;
     
-      std::srand(std::time(0));
-      
       for (int i = 0; i < maxAttempts; i++)
       {
         // first, guess candidates for each inv.declaration
@@ -513,6 +515,7 @@ namespace ufo
     RndLearner ds(m_efac, z3, ruleManager, b1, b2);
 
     ds.setupSafetySolver();
+    std::srand(std::time(0));
 
     if (ruleManager.decls.size() > 1)
     {
