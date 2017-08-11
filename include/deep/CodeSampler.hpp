@@ -1,8 +1,6 @@
 #ifndef CODESAMPLER__HPP__
 #define CODESAMPLER__HPP__
 
-#define MAXVARNM 10
-
 #include "ae/ExprSimpl.hpp"
 
 using namespace std;
@@ -222,7 +220,7 @@ namespace ufo
       }
     }
     
-    void analyzeCode(bool samplecode)
+    void analyzeCode()
     {
       if (false) // printing only
       {
@@ -237,42 +235,25 @@ namespace ufo
       
       intCoefs.insert(1);
       intConsts.insert(0);
-      
+
       // get samples and normalize
-      if (samplecode)
+      // for the query: add a negation of the entire non-recursive part:
+      if (hr.isQuery)
       {
-        // for the query: add a negation of the entire non-recursive part:
-        if (hr.isQuery)
-        {
-          Expr massaged = propagateEqualities(hr.body);
-          massaged = unfoldITE(mkNeg(massaged));
-          massaged = convertToGEandGT(massaged);
-          populateArityAndTemplates(massaged);
-        }
-        else
-        {
-          // for others: the entire non-recursive part
-          for (auto &cnj : hr.lin)
-          {
-            // GF: todo: make sure all constants in the code are Ints (otherwise, z3 could be unpredictable)
-            Expr massaged = unfoldITE(cnj);
-            massaged = convertToGEandGT(massaged);
-            populateArityAndTemplates(massaged);
-          }
-        }
+        Expr massaged = propagateEqualities(hr.body);
+        massaged = unfoldITE(mkNeg(massaged));
+        massaged = convertToGEandGT(massaged);
+        populateArityAndTemplates(massaged);
       }
       else
       {
-        // get int constants
-        // GF: todo: make sure all constants in the code are Ints (otherwise, z3 could be unpredictable)
-        ExprSet allNums;
-        expr::filter (hr.body, bind::IsHardIntConst(), std::inserter (allNums, allNums.begin ()));
-        
-        for (auto &a : allNums)
+        // for others: the entire non-recursive part
+        for (auto &cnj : hr.lin)
         {
-          int c = lexical_cast<int>(a);
-          intConsts.insert(c);
-          if (c != 0) intCoefs.insert(c);
+          // GF: todo: make sure all constants in the code are Ints (otherwise, z3 could be unpredictable)
+          Expr massaged = unfoldITE(cnj);
+          massaged = convertToGEandGT(massaged);
+          populateArityAndTemplates(massaged);
         }
       }
     }

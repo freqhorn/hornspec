@@ -31,14 +31,15 @@ namespace ufo
     int all;
 
     bool densecode;           // catch various statistics about the code (mostly, frequences) and setup the prob.distribution based on them
+    bool addepsilon;          // add some small probability to features that never happen in the code
     bool aggressivepruning;   // aggressive pruning of the search space based on SAT/UNSAT (WARNING: may miss some invariants)
     
   public:
     
-    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool b1, bool b2) :
+    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool b1, bool b2, bool b3) :
       m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac),
       invNumber(0), all(0),
-      densecode(b1), aggressivepruning(b2) {}
+      densecode(b1), addepsilon(b2), aggressivepruning(b3) {}
     
     bool isTautology (Expr a)     // adjusted for big disjunctions
     {
@@ -236,7 +237,7 @@ namespace ufo
       for(auto ind : rels2update)
       {
         vector<LAfactory>& lf = lfs[ind];
-        lf.push_back(LAfactory (m_efac, densecode, aggressivepruning));
+        lf.push_back(LAfactory (m_efac, aggressivepruning));
         LAfactory& lf_before = lf[lf.size()-2];
         LAfactory& lf_after = lf.back();
 
@@ -272,7 +273,7 @@ namespace ufo
       curCandidates.push_back(NULL);
       
       lfs.push_back(vector<LAfactory> ());
-      lfs.back().push_back(LAfactory (m_efac, densecode, aggressivepruning));
+      lfs.back().push_back(LAfactory (m_efac, aggressivepruning));
       LAfactory& lf = lfs.back().back();
       
       invNumber++;
@@ -301,7 +302,7 @@ namespace ufo
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
         
         css.push_back(CodeSampler(hr, invRel, lf.getVars(), lf.nonlinVars));
-        css.back().analyzeCode(densecode);
+        css.back().analyzeCode();
         
         // convert intConsts to progConsts and add additive inverses (if applicable):
         for (auto &a : css.back().intConsts)
@@ -427,13 +428,58 @@ namespace ufo
             }
           }
         }
-
-        lf.stabilizeDensities(orArities);
-        if (print)
+      }
+      else
+      {
+        // same thing as in above; but instead of precise frequencies, we gather a rough presence
+        for (auto &lcs : lcss)
         {
-          outs() << "\nStatistics for " << *invRel << ":\n";
-          lf.printCodeStatistics(orArities);
+          int ar = lcs.arity;
+
+          // of arities of application of OR
+          lf.orAritiesDensity[ar] = 1;
+
+          for (auto & lc : lcs.dstate)
+          {
+            // of arities of application of PLUS
+            lf.plusAritiesDensity[ar][lc.arity] = 1;
+
+            // of constants
+            lf.intConstDensity[ar][lc.intconst] = 1;
+
+            // of comparison operations
+            lf.cmpOpDensity[ar][lc.cmpop] = 1;
+
+            set<int> vars;
+            int vars_id = -1;
+            for (int j = 0; j < lc.vcs.size(); j = j+2) vars.insert(lc.vcs[j]);
+            for (int j = 0; j < lf.varCombinations[ar][lc.arity].size(); j++)
+            {
+              if (lf.varCombinations[ar][lc.arity][j] == vars)
+              {
+                vars_id = j;
+                break;
+              }
+            }
+            assert(vars_id >= 0);
+
+            // of variable combinations
+            lf.varDensity[ar][lc.arity][vars_id] = 1;
+
+            // of variable coefficients
+            for (int j = 1; j < lc.vcs.size(); j = j+2)
+            {
+              lf.coefDensity[ ar ][ lc.vcs [j-1] ] [lc.vcs [j] ] = 1;
+            }
+          }
         }
+      }
+
+      lf.stabilizeDensities(orArities, addepsilon);
+      if (print)
+      {
+        outs() << "\nStatistics for " << *invRel << ":\n";
+        lf.printCodeStatistics(orArities);
       }
     }
     
@@ -505,14 +551,14 @@ namespace ufo
   };
   
   
-  inline void learnInvariants(string smt, int maxAttempts, bool b1=true, bool b2=true)
+  inline void learnInvariants(string smt, int maxAttempts, bool b1=true, bool b2=true, bool b3=true)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
     
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    RndLearner ds(m_efac, z3, ruleManager, b1, b2);
+    RndLearner ds(m_efac, z3, ruleManager, b1, b2, b3);
 
     ds.setupSafetySolver();
     std::srand(std::time(0));

@@ -225,11 +225,10 @@ namespace ufo
     ExprSet learntExprs;   // lemmas from learntLemmas
     map<lincoms, vector<weights>> ineqPriors;
     map<lincoms, set<int>> visited;
-    bool densecode;
     bool aggressivepruning;
     
     LAfactory(ExprFactory &_efac, bool _densecode=true, bool _aggressivepruning=true) :
-          m_efac(_efac), densecode(_densecode), aggressivepruning(_aggressivepruning)
+    m_efac(_efac), aggressivepruning(_aggressivepruning)
     {};
     
     void addVar(Expr var)
@@ -797,7 +796,7 @@ namespace ufo
         reInitialize(id, disj);
       }
       
-      if (densecode && isDefault(distrs[disj]))       // if it's the first time we look at this lin.combination,
+      if (isDefault(distrs[disj]))       // if it's the first time we look at this lin.combination,
       {                                               // we might want to guess a candidate based on the code
         curLAterm.intconst = chooseByWeight(intConstDensity[ar]);
         curLAterm.cmpop = chooseByWeight(cmpOpDensity[ar]);
@@ -951,12 +950,12 @@ namespace ufo
     
     void assignPrioritiesForLearnt(LAdisj& learnt)
     {
+      if (!aggressivepruning) return;
+
       vector<LAdisj> eqs;
       getEquivalentFormulas(learnt, eqs);
       for (auto &a : eqs) prioritiesLearnt (a);
-      
-      if (!aggressivepruning) return;
-      
+
       if (learnt.arity == 1)
       {
         LAdisj t;
@@ -1083,10 +1082,10 @@ namespace ufo
           guessUniformly(min_freq) / num_zeros / EPSILONFRACTION);
     }
 
-    void stabilizeDensities(set<int>& arities)
+    void stabilizeDensities(set<int>& arities, bool addEpsilon)
     {
-      int min_freq, eps = INT_MAX;
-      int num_zeros = 0;
+      int min_freq = INT_MAX;
+      int num_zeros, eps = 0;
 
       for (auto & ar : orAritiesDensity)
       {
@@ -1098,7 +1097,7 @@ namespace ufo
         }
       }
 
-      eps = getEpsilon(min_freq, num_zeros);
+      if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
       for (auto & ar : orAritiesDensity)
       {
         if (ar.second == 0) ar.second = eps;
@@ -1118,7 +1117,7 @@ namespace ufo
           }
         }
 
-        eps = getEpsilon(min_freq, num_zeros);
+        if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
         for (auto & pl : plusAritiesDensity[ar])
         {
           if (pl.second == 0) pl.second = eps;
@@ -1138,7 +1137,7 @@ namespace ufo
             }
           }
 
-          eps = getEpsilon(min_freq, num_zeros);
+          if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
           for (auto & c : coefDensity[ar][i])
           {
             if (c.second == 0) c.second = eps;
@@ -1157,7 +1156,7 @@ namespace ufo
           }
         }
 
-        eps = getEpsilon(min_freq, num_zeros);
+        if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
         for (auto & c : intConstDensity[ar])
         {
           if (c.second == 0) c.second = eps;
@@ -1175,7 +1174,7 @@ namespace ufo
           }
         }
 
-        eps = getEpsilon(min_freq, num_zeros);
+        if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
         for (auto & c : cmpOpDensity[ar])
         {
           if (c.second == 0) c.second = eps;
@@ -1195,7 +1194,7 @@ namespace ufo
             }
           }
 
-          eps = getEpsilon(min_freq, num_zeros);
+          if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
           for (auto &b : varDensity[ar][i])
           {
             if (b.second == 0) b.second = eps;
