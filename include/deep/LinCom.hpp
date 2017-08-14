@@ -227,7 +227,7 @@ namespace ufo
     map<lincoms, set<int>> visited;
     bool aggressivepruning;
     
-    LAfactory(ExprFactory &_efac, bool _densecode=true, bool _aggressivepruning=true) :
+    LAfactory(ExprFactory &_efac, bool _aggressivepruning) :
     m_efac(_efac), aggressivepruning(_aggressivepruning)
     {};
     

@@ -6,6 +6,8 @@
 #include "Distribution.hpp"
 #include "LinCom.hpp"
 #include "ae/SMTUtils.hpp"
+#include <iostream>
+#include <fstream>
 
 using namespace std;
 using namespace boost;
@@ -138,23 +140,54 @@ namespace ufo
     {
       for (int i = 0; i < invNumber; i++)
       {
+        LAfactory& lf = lfs[i].back();
+        if (isOpX<TRUE>(curCandidates[i])) lf.assignPrioritiesForFailed(lf.samples.back());
+        else lf.assignPrioritiesForLearnt(lf.samples.back());
+      }
+    }
+
+    void reportCheckingResults()
+    {
+      for (int i = 0; i < invNumber; i++)
+      {
         Expr cand = curCandidates[i];
         LAfactory& lf = lfs[i].back();
         if (isOpX<TRUE>(cand))
         {
           outs () << "    => bad candidate for " << *decls[i] << "\n";
-          lf.assignPrioritiesForFailed(lf.samples.back());
         }
         else
         {
           outs () << "    => learnt lemma for " << *decls[i] << "\n";
-          lf.assignPrioritiesForLearnt(lf.samples.back());
           lf.learntExprs.insert(cand);
           lf.learntLemmas.push_back(lf.samples.size() - 1);
         }
       }
     }
     
+    void resetLearntLemmas()
+    {
+      for (auto & lf : lfs)
+      {
+        lf.back().learntExprs.clear();
+        lf.back().learntLemmas.clear();
+      }
+    }
+
+    void resetSafetySolver()
+    {
+      int num = 0;
+      for (auto &hr: ruleManager.chcs)
+      {
+        if (!hr.isQuery) continue;
+
+        m_smt_safety_solvers[num].reset();
+        m_smt_safety_solvers[num].assertExpr (hr.body);
+        safety_progress[num] = false;
+        num++;
+      }
+    }
+
     bool checkSafety()
     {
       int num = 0;
@@ -198,6 +231,20 @@ namespace ufo
       }
     }
     
+    void serializeInvariants(vector<ExprSet>& invs, const char * outfile)
+    {
+
+      ofstream invfile;
+      invfile.open (string(outfile));
+      m_smt_solver.reset();
+
+      for (auto & i : invs) m_smt_solver.assertExpr(conjoin(i, m_efac));
+
+      m_smt_solver.toSmtLib (invfile);
+      invfile.flush ();
+      outs () << "\nInvariant serialized to " << outfile << "\n";
+    }
+
     void updateRels()
     {
       // this should not affect the learning process for a CHC system with one (declare-rel ...)
@@ -246,7 +293,7 @@ namespace ufo
           lf_after.addVar(a);
         }
 
-        doCodeSampling(decls[ind], lf_after);
+        doCodeSampling(decls[ind]);
 
         for (auto a : lf_before.learntExprs)
         {
@@ -284,11 +331,9 @@ namespace ufo
         Expr var = bind::mkConst(new_name, invDecl->arg(i));
         lf.addVar(var);
       }
-      
-      doCodeSampling (decls.back(), lf, true);
     }
 
-    void doCodeSampling(Expr invRel, LAfactory& lf, bool print=false)
+    void doCodeSampling(Expr invRel, bool print=false)
     {
       vector<CodeSampler> css;
       set<int> orArities;
@@ -296,6 +341,9 @@ namespace ufo
       set<int> progConsts;
       set<int> intCoefs;
       
+      int ind = getVarIndex(invRel, decls);
+      LAfactory& lf = lfs[ind].back();
+
       // analize each rule separately:
       for (auto &hr : ruleManager.chcs)
       {
@@ -483,7 +531,7 @@ namespace ufo
       }
     }
     
-    void synthesize(int maxAttempts)
+    void synthesize(int maxAttempts, char * outfile)
     {
       bool success = false;
       int iter = 1;
@@ -533,9 +581,12 @@ namespace ufo
           if (checkSafety())       // query is checked here
           {
             success = true;
-            break;
           }
         }
+
+        reportCheckingResults();
+
+        if (success) break;
 
         assignPriorities();
         updateRels();
@@ -547,15 +598,43 @@ namespace ufo
       else         outs () <<      "\nNo success after " << maxAttempts << " iterations\n";
       
       outs () << "        total number of SMT checks: " << all << "\n";
+
+      if (success && outfile != NULL)
+      {
+        vector<ExprSet> invs;
+        for (auto & lf : lfs) invs.push_back(lf.back().learntExprs);
+        serializeInvariants(invs, outfile);
+      }
+    }
+
+    void checkAllLemmas(vector<ExprSet>& lms, vector<ExprSet>& curMinLms, int& numTries, int invInd)
+    {
+      numTries++;
+      resetSafetySolver();
+      resetLearntLemmas();
+      for (int i = 0; i < invNumber; i++) curCandidates[i] = conjoin(lms[i], m_efac);
+
+      if (checkCandidates() && checkSafety())
+      {
+        if (lms[invInd].size() < curMinLms[invInd].size()) curMinLms[invInd] = lms[invInd];
+
+        for (auto & a : lms[invInd])
+        {
+          vector<ExprSet> lmsTry = lms;
+          lmsTry[invInd].erase(a);
+
+          checkAllLemmas(lmsTry, curMinLms, numTries, invInd);
+        }
+      }
     }
   };
   
   
-  inline void learnInvariants(string smt, int maxAttempts, bool b1=true, bool b2=true, bool b3=true)
+  inline void learnInvariants(string smt, char * outfile, int maxAttempts, bool b1=true, bool b2=true, bool b3=true)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
-    
+
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     RndLearner ds(m_efac, z3, ruleManager, b1, b2, b3);
@@ -572,10 +651,78 @@ namespace ufo
     for (auto& dcl: ruleManager.decls)
     {
       ds.initializeDecl(dcl);
+      ds.doCodeSampling (dcl->arg(0), true);
     }
 
-    ds.synthesize(maxAttempts);
+    ds.synthesize(maxAttempts, outfile);
   };
+
+
+  inline void getInductiveValidityCore (const char * chcfile, const char * invfile)
+  {
+    ExprFactory m_efac;
+    EZ3 z3(m_efac);
+
+    CHCs ruleManager(m_efac, z3);
+    ruleManager.parse(string(chcfile));
+    RndLearner ds(m_efac, z3, ruleManager, false, false, false);
+    ds.setupSafetySolver();
+
+    vector<string> invNames;
+    for (auto& dcl: ruleManager.decls)
+    {
+      ds.initializeDecl(dcl);
+      invNames.push_back(lexical_cast<string>(dcl->arg(0)));
+    }
+
+    Expr invTmp = z3_from_smtlib_file (z3, invfile);
+
+    vector<Expr> invs;
+    if (ruleManager.decls.size() == 1) invs.push_back(invTmp);
+    else
+    {
+      // each assert in invfile corresponds to an invariant
+      // after deserialization, all asserts are conjoined; so we need to split them now
+      for (int i = 0; i < ruleManager.decls.size(); i++)
+      {
+        invs.push_back(invTmp->arg(i));
+      }
+    }
+
+    vector<ExprSet> lms;
+    vector<vector<int>> sizeHistories;
+
+    for (auto & inv : invs)
+    {
+      vector<int> sizeHistory;
+      sizeHistory.push_back(isOpX<AND>(inv) ? inv->arity() : (isOpX<TRUE>(inv) ? 0 : 1));
+
+      SMTUtils u(m_efac);
+      inv = u.removeRedundantConjuncts(inv);       // rough simplification first
+
+      sizeHistory.push_back(isOpX<AND>(inv) ? inv->arity() : (isOpX<TRUE>(inv) ? 0 : 1));
+      sizeHistories.push_back(sizeHistory);
+
+      ExprSet lm;
+      getConj(inv, lm);
+      lms.push_back(lm);
+    }
+
+    vector<ExprSet> lmsMin = lms;
+
+    for (int i = 0; i < invs.size(); i++)
+    {
+      outs () << "Size reduction for " << invNames[i] << ": ";
+      for (auto a : sizeHistories[i]) outs () << a << " -> ";
+      int numTries = 0;
+      ds.checkAllLemmas(lms, lmsMin, numTries, i); // accurate simplification then
+      assert (numTries > 1);
+
+      outs () << lmsMin[i].size() << "\n";
+    }
+
+    ds.serializeInvariants(lmsMin, invfile);
+  }
 }
 
 #endif
