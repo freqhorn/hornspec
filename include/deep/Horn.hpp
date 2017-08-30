@@ -44,7 +44,7 @@ namespace ufo
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
 
-    void preprocess (Expr term, ExprSet& srcVars, ExprVector& relations, Expr &srcRelation, ExprVector& lin)
+    void preprocess (Expr term, ExprVector& srcVars, ExprVector& relations, Expr &srcRelation, ExprVector& lin)
     {
       if (isOpX<AND>(term))
       {
@@ -66,7 +66,8 @@ namespace ufo
                 if (rel == term->arg(0))
                 {
                   srcRelation = rel->arg(0);
-                  expr::filter (term, bind::IsConst(), std::inserter (srcVars, srcVars.begin ()));
+                  for (auto it = term->args_begin()+1, end = term->args_end(); it != end; ++it)
+                    srcVars.push_back(*it);
                 }
               }
             }
@@ -143,21 +144,19 @@ namespace ufo
         hr.head = head->arg(0);
         hr.dstRelation = head->arg(0)->arg(0);
 
-        ExprSet srcVars;
-        preprocess(body, srcVars, fp.m_rels, hr.srcRelation, hr.lin);
-        
+        preprocess(body, hr.srcVars, fp.m_rels, hr.srcRelation, hr.lin);
+
         hr.isFact = isOpX<TRUE>(hr.srcRelation);
         hr.isQuery = (hr.dstRelation == failDecl);
         hr.isInductive = (hr.srcRelation == hr.dstRelation);
         hr.body = conjoin(hr.lin, m_efac);
         outgs[hr.srcRelation].push_back(chcs.size()-1);
         
-        for (auto &a : srcVars) hr.srcVars.push_back(a);
-        
         if (!hr.isQuery)
         {
-          expr::filter (head, bind::IsConst(), std::inserter (hr.dstVars, hr.dstVars.begin ()));
-        }
+          for (auto it = head->args_begin()+1, end = head->args_end(); it != end; ++it)
+            hr.dstVars.push_back(*it);
+          }
         
         for(auto &a: args)
         {
