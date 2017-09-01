@@ -19,8 +19,8 @@ namespace ufo
 
     public:
 
-    BndExpl (ExprFactory &efac, EZ3 &z3, CHCs& r) :
-      m_efac(efac), ruleManager(r), u(efac) {}
+    BndExpl (CHCs& r) :
+      m_efac(r.m_efac), ruleManager(r), u(m_efac) {}
 
     void guessRandomTrace(vector<int>& trace)
     {
@@ -66,7 +66,7 @@ namespace ufo
     {
       ExprVector ssa;
 
-      ExprVector bindVars1;
+      ExprVector bindVars1 = ruleManager.chcs[trace[0]].srcVars;
       ExprVector bindVars2;
       int bindVar_index = 0;
       int locVar_index = 0;
@@ -76,6 +76,7 @@ namespace ufo
         bindVars2.clear();
         HornRuleExt& hr = ruleManager.chcs[step];
         Expr body = hr.body;
+
         for (int i = 0; i < hr.srcVars.size(); i++)
         {
           body = replaceAll(body, hr.srcVars[i], bindVars1[i]);
@@ -117,15 +118,15 @@ namespace ufo
       return conjoin(ssa, m_efac);
     }
 
-    void doit(int cur_bnd, int bnd)
+    bool exploreTraces(int cur_bnd, int bnd, bool print = false)
     {
       bool unsat = true;
       int num_traces = 0;
 
-      outs () << "Exploring traces (up to bound): 1";     // GF: trace of length 1 is always empty
+      if (print) outs () << "Exploring traces (up to bound): 1";     // GF: trace of length 1 is always empty
       while (unsat && cur_bnd <= bnd)
       {
-        outs () << ", " << cur_bnd;
+        if (print) outs () << ", " << cur_bnd;
         vector<vector<int>> traces;
         vector<int> empttrace;
 
@@ -140,9 +141,61 @@ namespace ufo
         }
       }
 
-      outs () << "\nTotal number of traces explored: " << num_traces <<"\n\n"
+      if (print)
+        outs () << "\nTotal number of traces explored: " << num_traces << "\n\n"
               << (unsat ? "UNSAT for all traces up to " : "SAT for a trace with ")
               << (cur_bnd - 1) << " steps\n";
+      return unsat;
+    }
+
+    bool kIndIter(int bnd1, int bnd2)
+    {
+      assert (bnd1 <= bnd2);
+      assert (bnd2 > 1);
+      bool init = exploreTraces(bnd1, bnd2);
+      if (!init)
+      {
+        outs() << "Base check failed at step " << bnd2 << "\n";
+        exit(0);
+      }
+
+      int tr_ind;
+      int pr_ind;
+      int k_ind = ruleManager.chcs.size(); // == 3
+
+      for (int i = 0; i < k_ind; i++)
+      {
+        auto & r = ruleManager.chcs[i];
+        if (r.isInductive) tr_ind = i;
+        if (r.isQuery) pr_ind = i;
+      }
+
+      ruleManager.chcs.push_back(HornRuleExt());   // trick for now: a new artificial CHC
+      HornRuleExt& hr = ruleManager.chcs[k_ind];
+      HornRuleExt& tr = ruleManager.chcs[tr_ind];
+      HornRuleExt& pr = ruleManager.chcs[pr_ind];
+
+      hr.srcVars = tr.srcVars;
+      hr.dstVars = tr.dstVars;
+      hr.locVars = tr.locVars;
+
+      hr.body = mk<AND>(tr.body, mkNeg(pr.body));
+
+      for (int i = 0; i < hr.srcVars.size(); i++)
+      {
+        hr.body = replaceAll(hr.body, pr.srcVars[i], hr.srcVars[i]);
+      }
+
+      vector<int> gen_trace;
+      for (int i = 1; i < bnd2; i++) gen_trace.push_back(k_ind);
+      gen_trace.push_back(pr_ind);
+      Expr q = toExpr(gen_trace);
+      bool res = !u.isSat(q);
+
+      // prepare for the next iteration
+      ruleManager.chcs.erase (ruleManager.chcs.begin() + k_ind);
+
+      return res;
     }
   };
 
@@ -152,8 +205,45 @@ namespace ufo
     EZ3 z3(m_efac);
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    BndExpl ds(m_efac, z3, ruleManager);
-    ds.doit(bnd1, bnd2);
+    BndExpl ds(ruleManager);
+    ds.exploreTraces(bnd1, bnd2);
+  };
+
+  inline bool kInduction(CHCs& ruleManager, int bnd)
+  {
+    if (ruleManager.chcs.size() != 3)
+    {
+      outs () << "currently not supported\n";
+      return false;
+    }
+
+    BndExpl ds(ruleManager);
+
+    bool success = false;
+    int i;
+    for (i = 2; i < bnd; i++)
+    {
+      if (ds.kIndIter(i, i))
+      {
+        success = true;
+        break;
+      }
+    }
+
+    outs () << "\n" <<
+      (success ? "K-induction succeeded " : "Unknown result ") <<
+      "after " << (i-1) << " iterations\n";
+
+    return success;
+  };
+
+  inline void kInduction(string smt, int bnd)
+  {
+    ExprFactory m_efac;
+    EZ3 z3(m_efac);
+    CHCs ruleManager(m_efac, z3);
+    ruleManager.parse(smt);
+    kInduction(ruleManager, bnd);
   };
 }
 

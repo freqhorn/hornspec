@@ -30,12 +30,10 @@ namespace ufo
 
   class CHCs
   {
-    private:
+    public:
 
     ExprFactory &m_efac;
     EZ3 &m_z3;
-
-    public:
 
     Expr failDecl;
     vector<HornRuleExt> chcs;
