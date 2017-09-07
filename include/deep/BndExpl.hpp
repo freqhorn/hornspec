@@ -16,11 +16,21 @@ namespace ufo
     ExprFactory &m_efac;
     SMTUtils u;
     CHCs& ruleManager;
+    Expr extraLemmas;
+
+    int tr_ind; // helper vars
+    int pr_ind;
+    int k_ind;
+
+    Expr inv;   // 1-inductive proof
 
     public:
 
     BndExpl (CHCs& r) :
       m_efac(r.m_efac), ruleManager(r), u(m_efac) {}
+
+    BndExpl (CHCs& r, Expr lms) :
+    m_efac(r.m_efac), ruleManager(r), u(m_efac), extraLemmas(lms) {}
 
     void guessRandomTrace(vector<int>& trace)
     {
@@ -159,9 +169,7 @@ namespace ufo
         exit(0);
       }
 
-      int tr_ind;
-      int pr_ind;
-      int k_ind = ruleManager.chcs.size(); // == 3
+      k_ind = ruleManager.chcs.size(); // == 3
 
       for (int i = 0; i < k_ind; i++)
       {
@@ -181,6 +189,8 @@ namespace ufo
 
       hr.body = mk<AND>(tr.body, mkNeg(pr.body));
 
+      if (extraLemmas != NULL) hr.body = mk<AND>(extraLemmas, hr.body);
+
       for (int i = 0; i < hr.srcVars.size(); i++)
       {
         hr.body = replaceAll(hr.body, pr.srcVars[i], hr.srcVars[i]);
@@ -192,10 +202,24 @@ namespace ufo
       Expr q = toExpr(gen_trace);
       bool res = !u.isSat(q);
 
+      if (bnd2 == 2) inv = mkNeg(pr.body);
+
       // prepare for the next iteration
       ruleManager.chcs.erase (ruleManager.chcs.begin() + k_ind);
 
       return res;
+    }
+
+    Expr getInv(ExprVector& vars)
+    {
+      assert(inv != NULL);
+
+      for (int i = 0; i < ruleManager.chcs[pr_ind].srcVars.size(); i++)
+      {
+        inv = replaceAll(inv, ruleManager.chcs[pr_ind].srcVars[i], vars[i]);
+      }
+
+      return inv;
     }
   };
 
@@ -206,7 +230,7 @@ namespace ufo
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     BndExpl ds(ruleManager);
-    ds.exploreTraces(bnd1, bnd2);
+    ds.exploreTraces(bnd1, bnd2, true);
   };
 
   inline bool kInduction(CHCs& ruleManager, int bnd)

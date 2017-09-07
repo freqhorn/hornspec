@@ -5,6 +5,7 @@
 #include "CodeSampler.hpp"
 #include "Distribution.hpp"
 #include "LinCom.hpp"
+#include "BndExpl.hpp"
 #include "ae/SMTUtils.hpp"
 #include <iostream>
 #include <fstream>
@@ -30,18 +31,24 @@ namespace ufo
     vector<vector<LAfactory>> lfs;
     vector<Expr> curCandidates;
     int invNumber;
-    int all;
+    int numOfSMTChecks;
+
+    bool kind_succeeded;      // interaction with k-induction
+    bool oneInductiveProof;
 
     bool densecode;           // catch various statistics about the code (mostly, frequences) and setup the prob.distribution based on them
     bool addepsilon;          // add some small probability to features that never happen in the code
     bool aggressivepruning;   // aggressive pruning of the search space based on SAT/UNSAT (WARNING: may miss some invariants)
-    
+    bool kinduction;
+
+    bool printLog;
   public:
     
-    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool b1, bool b2, bool b3) :
+    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool k, bool b1, bool b2, bool b3) :
       m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac),
-      invNumber(0), all(0),
-      densecode(b1), addepsilon(b2), aggressivepruning(b3) {}
+      invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k),
+      densecode(b1), addepsilon(b2), aggressivepruning(b3),
+      printLog(true) {}
     
     bool isTautology (Expr a)     // adjusted for big disjunctions
     {
@@ -62,7 +69,7 @@ namespace ufo
       m_smt_solver.reset();
       
       bool res = false;
-      for (auto &v : varComb )
+      for (auto &v : varComb)
       {
         m_smt_solver.assertExpr(conjoin(v.second, m_efac));
         if (!m_smt_solver.solve ())
@@ -95,14 +102,15 @@ namespace ufo
         {
           ind1 = getVarIndex(hr.srcRelation, decls);
           LAfactory& lf1 = lfs[ind1].back();
-          
+
           cand1 = curCandidates[ind1];
+
           for (int i = 0; i < hr.srcVars.size(); i++)
           {
             cand1 = replaceAll(cand1, lf1.getVarE(i), hr.srcVars[i]);
           }
           m_smt_solver.assertExpr(cand1);
-          
+
           lmApp = conjoin(lf1.learntExprs, m_efac);
           for (int i = 0; i < hr.srcVars.size(); i++)
           {
@@ -122,7 +130,7 @@ namespace ufo
         
         m_smt_solver.assertExpr(mk<NEG>(cand2));
         
-        all++;
+        numOfSMTChecks++;
         boost::tribool res = m_smt_solver.solve ();
         if (res)    // SAT   == candidate failed
         {
@@ -146,7 +154,7 @@ namespace ufo
       }
     }
 
-    void reportCheckingResults()
+    void reportCheckingResults(bool doRedundancyOptim = true)
     {
       for (int i = 0; i < invNumber; i++)
       {
@@ -154,13 +162,25 @@ namespace ufo
         LAfactory& lf = lfs[i].back();
         if (isOpX<TRUE>(cand))
         {
-          outs () << "    => bad candidate for " << *decls[i] << "\n";
+          if (printLog) outs () << "    => bad candidate for " << *decls[i] << "\n";
         }
         else
         {
-          outs () << "    => learnt lemma for " << *decls[i] << "\n";
-          lf.learntExprs.insert(cand);
-          lf.learntLemmas.push_back(lf.samples.size() - 1);
+          if (printLog) outs () << "    => learned lemma for " << *decls[i] << "\n";
+
+          if (doRedundancyOptim)
+          {
+            Expr allLemmas = conjoin(lf.learntExprs, m_efac);
+            if (u.isImplies(allLemmas, cand))
+            {
+              curCandidates[i] = mk<TRUE>(m_efac);
+            }
+            else
+            {
+              lf.learntLemmas.push_back(lf.samples.size() - 1);
+              lf.learntExprs.insert(cand);
+            }
+          }
         }
       }
     }
@@ -172,6 +192,58 @@ namespace ufo
         lf.back().learntExprs.clear();
         lf.back().learntLemmas.clear();
       }
+    }
+
+    bool checkWithKInduction()
+    {
+      if (ruleManager.chcs.size() != 3) return false; // current limitation
+      if (lfs.size() != 1) return false;              // current limitation
+      if (kind_succeeded) return false;
+
+      Expr cand = curCandidates[0];
+      if (isOpX<TRUE>(cand)) return false;
+
+      LAfactory& lf = lfs[0].back();
+      Expr allLemmas = conjoin(lf.learntExprs, m_efac);
+
+      // get lemmas to be included to inductive rule
+      for (int i = 0; i < ruleManager.chcs.size(); i++)
+      {
+        auto & hr = ruleManager.chcs[i];
+        if (!hr.isInductive) continue;
+
+        for (int i = 0; i < hr.srcVars.size(); i++)
+        {
+          allLemmas = replaceAll(allLemmas, lf.getVarE(i), hr.srcVars[i]);
+        }
+      }
+
+      BndExpl bnd(ruleManager, allLemmas);
+
+      int i;
+      for (i = 2; i < 5; i++) // 2 - a reasanoble lowerbound, 5 - a hardcoded upperbound
+      {
+        kind_succeeded = bnd.kIndIter(i, i);
+        numOfSMTChecks += i;
+        if (kind_succeeded) break;
+      }
+
+      if (kind_succeeded)
+      {
+        outs () << "\n" << "K-induction succeeded after " << (i-1) << " iterations\n";
+        oneInductiveProof = (i == 2);
+        if (oneInductiveProof) // can complete the invariant only when the proof is 1-inductive
+        {
+          curCandidates[0] = bnd.getInv(lf.getVars());
+          bool addedRemainingLemma = checkCandidates() && checkSafety();
+          if (addedRemainingLemma) lf.learntExprs.insert(curCandidates[0]); // for serialization only
+
+          if (printLog) outs () << "remaining lemma(s): " << *curCandidates[0] <<
+                 "\nsanity check: " << addedRemainingLemma << "\n";
+        }
+      }
+
+      return kind_succeeded;
     }
 
     void resetSafetySolver()
@@ -210,7 +282,7 @@ namespace ufo
         m_smt_safety_solvers[num-1].assertExpr(invApp);
         safety_progress[num-1] = !m_smt_safety_solvers[num-1].solve ();
 
-        all++;
+        numOfSMTChecks++;
       }
 
       for (auto a : safety_progress) if (a.second == false) return false;
@@ -233,6 +305,11 @@ namespace ufo
     
     void serializeInvariants(vector<ExprSet>& invs, const char * outfile)
     {
+      if (!oneInductiveProof)
+      {
+        outs() << "\nCurrently unable to serialize k-inductive invariants\n";
+        return;
+      }
 
       ofstream invfile;
       invfile.open (string(outfile));
@@ -269,7 +346,7 @@ namespace ufo
                 lemma2add = replaceAll(lemma2add, lf.getVarE(i), hr.srcVars[i]);
               }
 
-              all++;
+              numOfSMTChecks++;
               if (u.isImplies(hr.body, lemma2add)) continue;
 
               hr.lin.push_back(lemma2add);
@@ -333,7 +410,7 @@ namespace ufo
       }
     }
 
-    void doCodeSampling(Expr invRel, bool print=false)
+    void doCodeSampling(Expr invRel)
     {
       vector<CodeSampler> css;
       set<int> orArities;
@@ -367,7 +444,7 @@ namespace ufo
         }
       }
       
-      if (print && lf.nonlinVars.size() > 0)
+      if (printLog && lf.nonlinVars.size() > 0)
       {
         outs() << "Multed vars: ";
         for (auto &a : lf.nonlinVars)
@@ -524,7 +601,7 @@ namespace ufo
       }
 
       lf.stabilizeDensities(orArities, addepsilon);
-      if (print)
+      if (printLog)
       {
         outs() << "\nStatistics for " << *invRel << ":\n";
         lf.printCodeStatistics(orArities);
@@ -570,10 +647,16 @@ namespace ufo
         }
         
         if (skip) continue;
-        
-        outs() << "\n  ---- new iteration " << iter++ <<  " ----\n";
-        for (int j = 0; j < invNumber; j++) outs () << "candidate for " << *decls[j] << ": " << *curCandidates[j] << "\n";
-        
+
+        iter++;
+
+        if (printLog)
+        {
+          outs() << "\n  ---- new iteration " << iter <<  " ----\n";
+          for (int j = 0; j < invNumber; j++)
+            outs () << "candidate for " << *decls[j] << ": " << *curCandidates[j] << "\n";
+        }
+
         // check all the candidates at once for all CHCs :
         
         if (checkCandidates())
@@ -585,7 +668,9 @@ namespace ufo
         }
 
         reportCheckingResults();
+        if (success) break;
 
+        success = checkWithKInduction();
         if (success) break;
 
         assignPriorities();
@@ -597,7 +682,11 @@ namespace ufo
       if (success) outs () << "\n -----> Success after " << --iter      << " iterations\n";
       else         outs () <<      "\nNo success after " << maxAttempts << " iterations\n";
       
-      outs () << "        total number of SMT checks: " << all << "\n";
+      for (int j = 0; j < invNumber; j++)
+        outs () << "        number of sampled lemmas for " << *decls[j] << ": "
+          << lfs[j].back().learntExprs.size() << "\n";
+
+      outs () << "        number of SMT checks: " << numOfSMTChecks << "\n";
 
       if (success && outfile != NULL)
       {
@@ -630,14 +719,15 @@ namespace ufo
   };
   
   
-  inline void learnInvariants(string smt, char * outfile, int maxAttempts, bool b1=true, bool b2=true, bool b3=true)
+  inline void learnInvariants(string smt, char * outfile, int maxAttempts,
+                              bool kind=false, bool b1=true, bool b2=true, bool b3=true)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    RndLearner ds(m_efac, z3, ruleManager, b1, b2, b3);
+    RndLearner ds(m_efac, z3, ruleManager, kind, b1, b2, b3);
 
     ds.setupSafetySolver();
     std::srand(std::time(0));
@@ -651,7 +741,7 @@ namespace ufo
     for (auto& dcl: ruleManager.decls)
     {
       ds.initializeDecl(dcl);
-      ds.doCodeSampling (dcl->arg(0), true);
+      ds.doCodeSampling (dcl->arg(0));
     }
 
     ds.synthesize(maxAttempts, outfile);
@@ -665,7 +755,7 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(string(chcfile));
-    RndLearner ds(m_efac, z3, ruleManager, false, false, false);
+    RndLearner ds(m_efac, z3, ruleManager, false, false, false, false);
     ds.setupSafetySolver();
 
     vector<string> invNames;

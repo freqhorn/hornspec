@@ -40,6 +40,7 @@ int main (int argc, char ** argv)
 {
   const char *OPT_HELP = "--help";
   const char *OPT_MAX_ATTEMPTS = "--attempts";
+  const char *OPT_K_IND = "--kind";
   const char *OPT_OUT_FILE = "--out";
   const char *OPT_GET_FREQS = "--freqs";
   const char *OPT_ADD_EPSILON = "--eps";
@@ -59,17 +60,20 @@ int main (int argc, char ** argv)
         " " << OPT_ADD_EPSILON << "                           add small probabilities to features that never happen in the code\n" <<
         " " << OPT_AGG_PRUNING << "                          prioritize and prune the search space aggressively\n" <<
         " " << OPT_GET_FREQS << "                         calculate frequency distributions and sample from them\n" <<
-        "                                 (if not specified, sample from uniform distributions)\n";
+        "                                 (if not specified, sample from uniform distributions)\n" <<
+        " " << OPT_K_IND << "                          run k-induction after each learned lemma\n" <<
+        "                                 (for pure k-induction, run 'kind <file.smt2>')\n";
 
     return 0;
   }
 
   int maxAttempts = getIntValue(OPT_MAX_ATTEMPTS, 2000000, argc, argv);
+  bool kinduction = getBoolValue(OPT_K_IND, false, argc, argv);
   bool densecode = getBoolValue(OPT_GET_FREQS, false, argc, argv);
   bool addepsilon = getBoolValue(OPT_ADD_EPSILON, false, argc, argv);
   bool aggressivepruning = getBoolValue(OPT_AGG_PRUNING, false, argc, argv);
   char * outfile = getStrValue(OPT_OUT_FILE, NULL, argc, argv);
 
-  learnInvariants(string(argv[argc-1]), outfile, maxAttempts, densecode, addepsilon, aggressivepruning);
+  learnInvariants(string(argv[argc-1]), outfile, maxAttempts, kinduction, densecode, addepsilon, aggressivepruning);
   return 0;
 }
