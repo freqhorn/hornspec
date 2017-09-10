@@ -11,7 +11,7 @@ Compiles with gcc-5 (on Linux) and clang-700 (on Mac). Assumes preinstalled Gmp 
 * `cd aeval ; mkdir build ; cd build`
 * `cmake ../`
 * `make` to build dependencies (Z3 and LLVM)
-* `make deephorn` to build FreqHorn
+* `make` (again) to build FreqHorn
 
 The binary of FreqHorn can be found at `build/tools/deep/`.
 Run `./tools/deep/deephorn --help` for the usage info.
