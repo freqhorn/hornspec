@@ -8,14 +8,30 @@ using namespace boost;
 
 namespace ufo
 {
+  inline bool rewriteHelperConsts(Expr& body, Expr v1, Expr v2)
+  {
+    if (isOpX<MPZ>(v1))
+    {
+      body = mk<AND>(body, mk<EQ>(v1, v2));
+      return true;
+    }
+    //else.. TODO: simplifications like "1 + 2" and support for other sorts like Reals and Bools
+    return false;
+  }
+
+  inline void rewriteHelperDupls(Expr& body, Expr _v1, Expr _v2, Expr v1, Expr v2)
+  {
+    if (_v1 == _v2) body = mk<AND>(body, mk<EQ>(v1, v2));
+    //else.. TODO: mine more complex relationships, like "_v1 + 1 = _v2"
+  }
+
   struct HornRuleExt
   {
     ExprVector srcVars;
     ExprVector dstVars;
     ExprVector locVars;
 
-    ExprVector lin;
-    Expr body;           // conjunction of lin
+    Expr body;
     Expr head;
 
     Expr srcRelation;
@@ -26,6 +42,45 @@ namespace ufo
     bool isInductive;
 
     string suffix;
+
+    void assignVarsAndRewrite (ExprVector& _srcVars, ExprVector& invVarsSrc,
+                               ExprVector& _dstVars, ExprVector& invVarsDst)
+    {
+      for (int i = 0; i < _srcVars.size(); i++)
+      {
+        srcVars.push_back(invVarsSrc[i]);
+
+        // find constants
+        if (rewriteHelperConsts(body, _srcVars[i], srcVars[i])) continue;
+
+        body = replaceAll(body, _srcVars[i], srcVars[i]);
+        for (int j = 0; j < i; j++) // find duplicates among srcVars
+        {
+          rewriteHelperDupls(body, _srcVars[i], _srcVars[j], srcVars[i], srcVars[j]);
+        }
+      }
+
+      for (int i = 0; i < _dstVars.size(); i++)
+      {
+        // primed copy of var:
+        Expr new_name = mkTerm<string> (lexical_cast<string>(invVarsDst[i]) + "__", body->getFactory());
+        Expr var = bind::intConst(new_name);
+        dstVars.push_back(var);
+
+        // find constants
+        if (rewriteHelperConsts(body, _dstVars[i], dstVars[i])) continue;
+
+        body = replaceAll(body, _dstVars[i], dstVars[i]);
+        for (int j = 0; j < i; j++) // find duplicates among dstVars
+        {
+          rewriteHelperDupls(body, _dstVars[i], _dstVars[j], dstVars[i], dstVars[j]);
+        }
+        for (int j = 0; j < _srcVars.size(); j++) // find duplicates between srcVars and dstVars
+        {
+          rewriteHelperDupls(body, _dstVars[i], _srcVars[j], dstVars[i], srcVars[j]);
+        }
+      }
+    }
   };
 
   class CHCs
@@ -38,6 +93,7 @@ namespace ufo
     Expr failDecl;
     vector<HornRuleExt> chcs;
     ExprSet decls;
+    map<Expr, ExprVector> invVars;
     map<Expr, vector<int>> outgs;
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
@@ -55,7 +111,7 @@ namespace ufo
       {
         if (isOpX<FAPP>(term))
         {
-          if (term->arity () > 0)
+          if (term->arity() > 0)
           {
             if (isOpX<FDECL>(term->arg(0)))
             {
@@ -95,68 +151,84 @@ namespace ufo
         {
           failDecl = a->arg(0);
         }
-        else
+        else if (invVars[a->arg(0)].size() == 0)
         {
           decls.insert(a);
+          for (int i = 1; i < a->arity()-1; i++)
+          {
+            Expr new_name = mkTerm<string> ("__v__" + to_string(i - 1), m_efac);
+            Expr var = bind::intConst(new_name);
+            invVars[a->arg(0)].push_back(var);
+          }
         }
       }
       
       for (auto &r: fp.m_rules)
       {
-        assert (isOpX<FORALL>(r));
-        
         chcs.push_back(HornRuleExt());
         HornRuleExt& hr = chcs.back();
-        
+
         hr.suffix = suff;
         hr.srcRelation = mk<TRUE>(m_efac);
-        
-        Expr rule = r->last();
-        
+        Expr rule = r;
         ExprVector args;
-        
-        for (int i = 0; i < r->arity() - 1; i++)
+
+        if (isOpX<FORALL>(r))
         {
-          Expr var = r->arg(i);
-          Expr name = bind::name (r->arg(i));
-          Expr new_name = mkTerm<string> (lexical_cast<string> (name.get()) + suff, m_efac);
-          Expr var_new = bind::fapp(bind::rename(var, new_name));
-          args.push_back(var_new);
+          rule = r->last();
+
+          for (int i = 0; i < r->arity() - 1; i++)
+          {
+            Expr var = r->arg(i);
+            Expr name = bind::name (r->arg(i));
+            Expr new_name = mkTerm<string> (lexical_cast<string> (name.get()) + suff, m_efac);
+            Expr var_new = bind::fapp(bind::rename(var, new_name));
+            args.push_back(var_new);
+          }
+
+          ExprVector actual_vars;
+          expr::filter (rule, bind::IsVar(), std::inserter (actual_vars, actual_vars.begin ()));
+
+          assert(actual_vars.size() == args.size());
+
+          for (int i = 0; i < actual_vars.size(); i++)
+          {
+            string a1 = lexical_cast<string>(bind::name(actual_vars[i]));
+            int ind = args.size() - 1 - atoi(a1.substr(1).c_str());
+            rule = replaceAll(rule, actual_vars[i], args[ind]);
+          }
         }
-        
-        ExprVector actual_vars;
-        expr::filter (rule, bind::IsVar(), std::inserter (actual_vars, actual_vars.begin ()));
-        
-        assert(actual_vars.size() == args.size());
-        
-        for (int i = 0; i < actual_vars.size(); i++)
-        {
-          string a1 = lexical_cast<string>(bind::name(actual_vars[i]));
-          int ind = args.size() - 1 - atoi(a1.substr(1).c_str());
-          rule = replaceAll(rule, actual_vars[i], args[ind]);
-        }
-        
+
+        if (!isOpX<IMPL>(rule)) rule = mk<IMPL>(mk<TRUE>(m_efac), rule);
+
         Expr body = rule->arg(0);
         Expr head = rule->arg(1);
-        
+
         hr.head = head->arg(0);
         hr.dstRelation = head->arg(0)->arg(0);
 
-        preprocess(body, hr.srcVars, fp.m_rels, hr.srcRelation, hr.lin);
+        ExprVector origSrcVars;
+        ExprVector lin;
+        preprocess(body, origSrcVars, fp.m_rels, hr.srcRelation, lin);
 
         hr.isFact = isOpX<TRUE>(hr.srcRelation);
         hr.isQuery = (hr.dstRelation == failDecl);
         hr.isInductive = (hr.srcRelation == hr.dstRelation);
-        hr.body = conjoin(hr.lin, m_efac);
+        hr.body = conjoin(lin, m_efac);
         outgs[hr.srcRelation].push_back(chcs.size()-1);
-        
+
+        ExprVector origDstVars;
+
         if (!hr.isQuery)
         {
           for (auto it = head->args_begin()+1, end = head->args_end(); it != end; ++it)
-            hr.dstVars.push_back(*it);
-          }
-        
-        for(auto &a: args)
+            origDstVars.push_back(*it);
+        }
+
+        hr.assignVarsAndRewrite (origSrcVars, invVars[hr.srcRelation],
+                                 origDstVars, invVars[hr.dstRelation]);
+
+        for (auto &a: args)
         {
           bool found = false;
           for (auto &b : hr.dstVars)

@@ -205,7 +205,9 @@ namespace ufo
     
     int indexGT;
     int indexGE;
-    
+
+    ExprSet nonlinVarsSet;
+
     public:
     
     ExprMap nonlinVars;
@@ -270,6 +272,8 @@ namespace ufo
 //      // finally, map values to expressions
       for (auto a : intCoefs) intCoefsE.push_back(mkTerm (mpz_class (a), m_efac));    // assemble expressions
       for (auto a : intConsts) intConstsE.push_back(mkTerm (mpz_class (a), m_efac));  //
+
+      for (auto &a : nonlinVars) nonlinVarsSet.insert(a.second);
     }
     
     vector<int>& getConsts()
@@ -356,8 +360,13 @@ namespace ufo
       Expr lc = assembleLinComb(s);
       Expr ineq = getAtom(templ, lc, ic);
       
-      if (replaceNonlin)
-        for (auto &a : nonlinVars) ineq = replaceAll(ineq, a.second, a.first);
+      if (replaceNonlin && nonlinVarsSet.size() > 0)
+      {
+        while (!emptyIntersect(ineq, nonlinVarsSet)) // replace cascadically
+        {
+          for (auto &a : nonlinVars) ineq = replaceAll(ineq, a.second, a.first);
+        }
+      }
       
       return ineq;
     }
@@ -1085,7 +1094,8 @@ namespace ufo
     void stabilizeDensities(set<int>& arities, bool addEpsilon)
     {
       int min_freq = INT_MAX;
-      int num_zeros, eps = 0;
+      int num_zeros = 0;
+      int eps = 0;
 
       for (auto & ar : orAritiesDensity)
       {
@@ -1098,6 +1108,8 @@ namespace ufo
       }
 
       if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
+        else if (num_zeros == orAritiesDensity.size()) eps = 1;
+
       for (auto & ar : orAritiesDensity)
       {
         if (ar.second == 0) ar.second = eps;
@@ -1118,6 +1130,8 @@ namespace ufo
         }
 
         if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
+          else if (num_zeros == plusAritiesDensity[ar].size()) eps = 1;
+
         for (auto & pl : plusAritiesDensity[ar])
         {
           if (pl.second == 0) pl.second = eps;
@@ -1138,6 +1152,8 @@ namespace ufo
           }
 
           if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
+            else if (num_zeros == coefDensity[ar][i].size()) eps = 1;
+
           for (auto & c : coefDensity[ar][i])
           {
             if (c.second == 0) c.second = eps;
@@ -1157,6 +1173,8 @@ namespace ufo
         }
 
         if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
+          else if (num_zeros == intConstDensity[ar].size()) eps = 1;
+
         for (auto & c : intConstDensity[ar])
         {
           if (c.second == 0) c.second = eps;
@@ -1175,6 +1193,8 @@ namespace ufo
         }
 
         if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
+          else if (num_zeros == cmpOpDensity[ar].size()) eps = 1;
+
         for (auto & c : cmpOpDensity[ar])
         {
           if (c.second == 0) c.second = eps;
@@ -1195,6 +1215,8 @@ namespace ufo
           }
 
           if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
+            else if (num_zeros == varDensity[ar][i].size()) eps = 1;
+
           for (auto &b : varDensity[ar][i])
           {
             if (b.second == 0) b.second = eps;

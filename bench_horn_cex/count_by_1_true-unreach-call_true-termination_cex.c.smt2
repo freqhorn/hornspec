@@ -21,7 +21,7 @@
 (rule (=>
   (and
     (itp LRG LRG)
-    (> LRG 10000)   ; assume LRG is actually large (not asserted in the .c)
+    (> LRG 1000)   ; assume LRG is actually large (not asserted in the .c)
   ) fail))
 
 (query fail :print-certificate true)

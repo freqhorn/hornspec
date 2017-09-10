@@ -14,18 +14,17 @@ using namespace std;
 using namespace boost;
 namespace ufo
 {
-  
   class RndLearner
   {
     private:
-    
+
     ExprFactory &m_efac;
     EZ3 &m_z3;
     SMTUtils u;
     ufo::ZSolver<ufo::EZ3> m_smt_solver;
     vector<ufo::ZSolver<ufo::EZ3>> m_smt_safety_solvers;
     map<int, bool> safety_progress;
-    
+
     CHCs& ruleManager;
     vector<Expr> decls;
     vector<vector<LAfactory>> lfs;
@@ -42,13 +41,14 @@ namespace ufo
     bool kinduction;
 
     bool printLog;
-  public:
+
+    public:
     
     RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool k, bool b1, bool b2, bool b3) :
       m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac),
       invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k),
       densecode(b1), addepsilon(b2), aggressivepruning(b3),
-      printLog(true) {}
+      printLog(false){}
     
     bool isTautology (Expr a)     // adjusted for big disjunctions
     {
@@ -349,7 +349,6 @@ namespace ufo
               numOfSMTChecks++;
               if (u.isImplies(hr.body, lemma2add)) continue;
 
-              hr.lin.push_back(lemma2add);
               hr.body = mk<AND>(hr.body, lemma2add);
 
               rels2update.insert(getVarIndex(hr.dstRelation, decls));
@@ -365,10 +364,8 @@ namespace ufo
         LAfactory& lf_before = lf[lf.size()-2];
         LAfactory& lf_after = lf.back();
 
-        for (auto a : lf_before.getVars())
-        {
-          lf_after.addVar(a);
-        }
+        for (auto & var : ruleManager.invVars[decls[ind]]) lf_after.addVar(var);
+        lf_after.nonlinVars = lf_before.nonlinVars;
 
         doCodeSampling(decls[ind]);
 
@@ -402,12 +399,7 @@ namespace ufo
       
       invNumber++;
       
-      for (int i = 1; i < invDecl->arity()-1; i++)
-      {
-        Expr new_name = mkTerm<string> ("__v__" + to_string(i - 1), m_efac);
-        Expr var = bind::mkConst(new_name, invDecl->arg(i));
-        lf.addVar(var);
-      }
+      for (auto & var : ruleManager.invVars[decls.back()]) lf.addVar(var);
     }
 
     void doCodeSampling(Expr invRel)
@@ -444,12 +436,12 @@ namespace ufo
         }
       }
       
-      if (printLog && lf.nonlinVars.size() > 0)
+      if (lf.nonlinVars.size() > 0)
       {
-        outs() << "Multed vars: ";
+        if (printLog) outs() << "Multed vars: ";
         for (auto &a : lf.nonlinVars)
         {
-          outs() << *a.first << " = " << *a.second << "\n";
+          if (printLog) outs() << *a.first << " = " << *a.second << "\n";
           lf.addVar(a.second);
         }
       }
@@ -645,10 +637,8 @@ namespace ufo
 
           curCandidates[j] = cand;
         }
-        
-        if (skip) continue;
 
-        iter++;
+        if (skip) continue;
 
         if (printLog)
         {
@@ -657,8 +647,10 @@ namespace ufo
             outs () << "candidate for " << *decls[j] << ": " << *curCandidates[j] << "\n";
         }
 
+        iter++;
+
         // check all the candidates at once for all CHCs :
-        
+
         if (checkCandidates())
         {
           if (checkSafety())       // query is checked here

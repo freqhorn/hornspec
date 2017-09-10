@@ -1,6 +1,7 @@
 #ifndef CODESAMPLER__HPP__
 #define CODESAMPLER__HPP__
 
+#include "ae/AeValSolver.hpp"
 #include "ae/ExprSimpl.hpp"
 
 using namespace std;
@@ -137,7 +138,6 @@ namespace ufo
     
     void addSample(Expr term)
     {
-
       ExprSet actualVars;
       ExprSet subsetInvVars;
       
@@ -224,23 +224,38 @@ namespace ufo
     {
       if (false) // printing only
       {
-        outs () << "\nAnalize CHC:\n";
-        outs () << "src vars: ";
+        outs() << "\nAnalize CHC:\n";
+        outs() << "src vars: ";
         for (int i = 0; i < hr.srcVars.size(); i++) outs() << "[" << *invVars[i] << "] = " << *hr.srcVars[i] << ", ";
-        outs() <<"\n";
-        outs () << "dst vars: ";
+        outs() << "\n";
+        outs() << "dst vars: ";
         for (int i = 0; i < hr.dstVars.size(); i++) outs() << "[" << *invVars[i] << "] = " << *hr.dstVars[i] << ", ";
-        outs() <<"\n";
+        outs() << "\n";
+        outs() << "body: " << *hr.body << "\n\n";
       }
       
       intCoefs.insert(1);
       intConsts.insert(0);
 
+      Expr body = hr.body;
+
+      // black magic to get rid of irrelevant variables
+      ExprSet quantified;
+      for (auto &v : hr.locVars) quantified.insert(v);
+      if (hr.srcRelation != invRel) for (auto &v : hr.srcVars) quantified.insert(v);
+      if (hr.dstRelation != invRel) for (auto &v : hr.dstVars) quantified.insert(v);
+
+      if (quantified.size() > 0)
+      {
+        AeValSolver ae(mk<TRUE>(hr.body->getFactory()), hr.body, quantified);
+        if (ae.solve()) body = ae.getValidSubset();
+      }
+
       // get samples and normalize
       // for the query: add a negation of the entire non-recursive part:
       if (hr.isQuery)
       {
-        Expr massaged = propagateEqualities(hr.body);
+        Expr massaged = propagateEqualities(body);
         massaged = unfoldITE(mkNeg(massaged));
         massaged = convertToGEandGT(massaged);
         populateArityAndTemplates(massaged);
@@ -248,7 +263,9 @@ namespace ufo
       else
       {
         // for others: the entire non-recursive part
-        for (auto &cnj : hr.lin)
+        ExprSet lin;
+        getConj(body, lin);
+        for (auto &cnj : lin)
         {
           // GF: todo: make sure all constants in the code are Ints (otherwise, z3 could be unpredictable)
           Expr massaged = unfoldITE(cnj);

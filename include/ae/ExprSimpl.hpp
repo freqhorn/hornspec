@@ -995,7 +995,7 @@ namespace ufo
           if (extraVars[multedVars] == NULL)
           {
             Expr new_name = mkTerm<string> ("__e__" + to_string(extraVars.size()), t->getFactory());
-            Expr var = bind::mkConst(new_name, varsForMult[0]);
+            Expr var = bind::intConst(new_name);
             extraVars[multedVars] = var;
           }
           return (multedConsts == NULL) ? extraVars[multedVars] : mk<MULT>(multedConsts, extraVars[multedVars]);
@@ -1013,7 +1013,7 @@ namespace ufo
         if (extraVars[key] == NULL)
         {
           Expr new_name = mkTerm<string> ("__e__" + to_string(extraVars.size()), t->getFactory());
-          Expr var = bind::mkConst(new_name, t->left());
+          Expr var = bind::intConst(new_name);
           extraVars[key] = var;
         }
         return extraVars[key];

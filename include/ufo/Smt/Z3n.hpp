@@ -1020,7 +1020,9 @@ namespace ufo
         for (unsigned i = 0; i < rules.size (); ++i){
             Expr rule = z3.toExpr (rules [i]);
             m_rules.push_back(rule);
-            
+
+            if (!isOpX<FORALL>(rule)) continue;
+
             Expr head = rule->arg(rule->arity() - 1)->arg(1);
             if (isOpX<FAPP>(head)){
                 if (head->arity () > 0){
