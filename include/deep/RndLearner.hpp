@@ -32,6 +32,9 @@ namespace ufo
     int invNumber;
     int numOfSMTChecks;
 
+    ExprSet itpCandidates;    // itp-based bounded candidates
+
+    bool itp_succeeded;
     bool kind_succeeded;      // interaction with k-induction
     bool oneInductiveProof;
 
@@ -44,9 +47,9 @@ namespace ufo
 
     public:
     
-    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool k, bool b1, bool b2, bool b3) :
+    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool k, bool i, bool b1, bool b2, bool b3) :
       m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac),
-      invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k),
+      invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k), itp_succeeded(!i),
       densecode(b1), addepsilon(b2), aggressivepruning(b3),
       printLog(false){}
     
@@ -244,6 +247,56 @@ namespace ufo
       }
 
       return kind_succeeded;
+    }
+
+    void checkBoundedProofsBootstrap (int bnd)
+    {
+      assert (bnd >= 2);
+
+      BndExpl be(ruleManager);
+
+      HornRuleExt* pr;
+      for (auto & a : ruleManager.chcs) if (a.isQuery) pr = &a;
+
+      for (int i = 2; i <= bnd; i++)
+      {
+        Expr invTmp = be.getBoundedItp(i, pr->body, pr->srcVars);
+        ExprSet cnjs;
+        getConj(invTmp, cnjs);
+
+        for (auto & a : cnjs) itpCandidates.insert(a);
+      }
+    }
+
+    bool checkBoundedProofs ()
+    {
+      if (itp_succeeded) return false;
+      assert(invNumber == 1);
+
+      for (auto it = itpCandidates.begin(), end = itpCandidates.end(); it != end; )
+      {
+        curCandidates[0] = *it; // current limitation
+
+        if (printLog) outs () << "itp candidate for " << *decls[0] << ": " << **it << "\n";
+
+        if (checkCandidates())
+        {
+          reportCheckingResults();
+          itpCandidates.erase(it++);
+
+          if (checkSafety())
+          {
+            outs () << "safety proven with itp\n";
+            itp_succeeded = true;
+            return true;
+          }
+        }
+        else
+        {
+          ++it;
+        }
+      }
+      return false;
     }
 
     void resetSafetySolver()
@@ -651,18 +704,18 @@ namespace ufo
 
         // check all the candidates at once for all CHCs :
 
-        if (checkCandidates())
-        {
-          if (checkSafety())       // query is checked here
-          {
-            success = true;
-          }
-        }
+        int isInductive = checkCandidates();
+        if (isInductive) success = checkSafety();       // query is checked here
 
         reportCheckingResults();
         if (success) break;
 
-        success = checkWithKInduction();
+        if (isInductive)
+        {
+          success = checkWithKInduction();
+          success = checkBoundedProofs();
+        }
+
         if (success) break;
 
         assignPriorities();
@@ -712,14 +765,14 @@ namespace ufo
   
   
   inline void learnInvariants(string smt, char * outfile, int maxAttempts,
-                              bool kind=false, bool b1=true, bool b2=true, bool b3=true)
+                              bool kind=false, bool itp=false, bool b1=true, bool b2=true, bool b3=true)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    RndLearner ds(m_efac, z3, ruleManager, kind, b1, b2, b3);
+    RndLearner ds(m_efac, z3, ruleManager, kind, itp, b1, b2, b3);
 
     ds.setupSafetySolver();
     std::srand(std::time(0));
@@ -728,6 +781,11 @@ namespace ufo
     {
       outs() << "WARNING: learning multiple invariants is currently unstable\n"
              << "         it is suggested to disable \'aggressivepruning\'\n";
+    }
+    else if (itp)
+    {
+      // current limitation: ruleManager.decls.size() == 0
+      ds.checkBoundedProofsBootstrap(3);
     }
 
     for (auto& dcl: ruleManager.decls)
@@ -747,7 +805,7 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(string(chcfile));
-    RndLearner ds(m_efac, z3, ruleManager, false, false, false, false);
+    RndLearner ds(m_efac, z3, ruleManager, false, false, false, false, false);
     ds.setupSafetySolver();
 
     vector<string> invNames;

@@ -18,6 +18,8 @@ namespace ufo
     CHCs& ruleManager;
     Expr extraLemmas;
 
+    ExprVector bindVars1;
+
     int tr_ind; // helper vars
     int pr_ind;
     int k_ind;
@@ -76,7 +78,7 @@ namespace ufo
     {
       ExprVector ssa;
 
-      ExprVector bindVars1 = ruleManager.chcs[trace[0]].srcVars;
+      bindVars1 = ruleManager.chcs[trace[0]].srcVars;
       ExprVector bindVars2;
       int bindVar_index = 0;
       int locVar_index = 0;
@@ -220,6 +222,32 @@ namespace ufo
       }
 
       return inv;
+    }
+
+    Expr getBoundedItp(int bnd, Expr prop, ExprVector& vars)
+    {
+      vector<vector<int>> traces;
+
+      getAllTraces(mk<TRUE>(m_efac), ruleManager.failDecl, bnd, vector<int>(), traces);
+
+      for (auto &a : traces)
+      {
+        a.erase (a.end()-1); // encode all but the last step
+        Expr q = toExpr(a);
+        for (int i = 0; i < bindVars1.size(); i++) prop = replaceAll(prop, vars[i], bindVars1[i]);
+
+        Expr itp = getItp(q, prop);
+        if (itp != NULL)
+        {
+          for (int i = 0; i < bindVars1.size(); i++) itp = replaceAll(itp, bindVars1[i], vars[i]);
+          return itp;
+        }
+        else
+        {
+          return NULL;
+        }
+      }
+      return NULL;
     }
   };
 
