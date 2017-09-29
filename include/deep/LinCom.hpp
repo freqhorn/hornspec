@@ -1109,6 +1109,7 @@ namespace ufo
 
       if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
         else if (num_zeros == orAritiesDensity.size()) eps = 1;
+         else eps = 0;
 
       for (auto & ar : orAritiesDensity)
       {
@@ -1131,6 +1132,7 @@ namespace ufo
 
         if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
           else if (num_zeros == plusAritiesDensity[ar].size()) eps = 1;
+            else eps = 0;
 
         for (auto & pl : plusAritiesDensity[ar])
         {
@@ -1153,6 +1155,7 @@ namespace ufo
 
           if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
             else if (num_zeros == coefDensity[ar][i].size()) eps = 1;
+              else eps = 0;
 
           for (auto & c : coefDensity[ar][i])
           {
@@ -1174,6 +1177,7 @@ namespace ufo
 
         if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
           else if (num_zeros == intConstDensity[ar].size()) eps = 1;
+            else eps = 0;
 
         for (auto & c : intConstDensity[ar])
         {
@@ -1194,6 +1198,7 @@ namespace ufo
 
         if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
           else if (num_zeros == cmpOpDensity[ar].size()) eps = 1;
+            else eps = 0;
 
         for (auto & c : cmpOpDensity[ar])
         {
@@ -1216,6 +1221,7 @@ namespace ufo
 
           if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
             else if (num_zeros == varDensity[ar][i].size()) eps = 1;
+              else eps = 0;
 
           for (auto &b : varDensity[ar][i])
           {
