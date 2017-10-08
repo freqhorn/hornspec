@@ -24,21 +24,44 @@ namespace ufo
     ExprMap& extraVars;
     
     Expr zero;
+    ExprFactory &m_efac;
     
     CodeSampler(HornRuleExt& r, Expr& d, ExprVector& v, ExprMap& e) :
-      hr(r), invRel(d), invVars(v), extraVars(e)
+      hr(r), invRel(d), invVars(v), extraVars(e), m_efac(d->getFactory())
     {
       // add some "universal" constants
       intConsts.insert(0);
       intConsts.insert(1);
       intConsts.insert(-1);
-      
+
       // aux Expr const
-      zero = mkTerm (mpz_class (0), invRel->getFactory());
+      zero = mkTerm (mpz_class (0), m_efac);
     };
     
     void addSampleHlp(Expr tmpl, ExprVector& vars, ExprSet& actualVars)
     {
+      ExprSet dsjs;
+      ExprSet newDsjs;
+      getDisj(tmpl, dsjs);
+      for (auto & dsj : dsjs)
+      {
+        ExprSet vrs;
+        expr::filter (dsj, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
+        bool found = true;
+
+        for (auto & a : vrs)
+        {
+          if (std::find(std::begin(vars), std::end (vars), a)
+              == std::end(vars)) {found = false; break; }
+        }
+        if (found) newDsjs.insert(dsj);
+      }
+
+      if (newDsjs.size() == 0) return;
+
+      tmpl = disjoin (newDsjs, m_efac);
+      tmpl = findNonlinAndRewrite(tmpl, vars, invVars, extraVars);
+
       ExprVector invVarsCstm = invVars;
       for (auto &v : actualVars)
       {
@@ -47,44 +70,30 @@ namespace ufo
         {
           tmpl = replaceAll(tmpl, v, invVars[index]);
         }
-        else
-        {
-          int notfound = true;
-          for (auto &a : extraVars)
-          {
-            if (a.second == v)
-            {
-              invVarsCstm.push_back(v);
-              notfound = false;
-              break;
-            }
-          }
-          if (notfound)
-          {
-            return; // tmpl = replaceAll(tmpl, v, zero);
-          }
-        }
       }
-      Expr tmpl2 = normalizeDisj(tmpl, invVarsCstm);
-      if (!isOpX<FALSE> (tmpl2) && !isOpX<TRUE> (tmpl2))
+
+      for (auto &a : extraVars) invVarsCstm.push_back(a.second);
+
+      tmpl = normalizeDisj(tmpl, invVarsCstm);
+
+      if (!isOpX<FALSE> (tmpl) && !isOpX<TRUE> (tmpl))
       {
-        candidates.insert(tmpl2);
+        candidates.insert(tmpl);
         
         // get int constants from the normalized candidate
         ExprSet intConstsE;
-        expr::filter (tmpl2, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
+        expr::filter (tmpl, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
         
-        for (auto &a : intConstsE)
-        {
-          intConsts.insert(lexical_cast<int>(a));
-        }
-        
-        getLinCombCoefs(tmpl2, intCoefs);
+        for (auto &a : intConstsE) intConsts.insert(lexical_cast<int>(a));
+        getLinCombCoefs(tmpl, intCoefs);
       }
     }
     
     void processTransition(Expr tmpl, ExprVector& srcVars, ExprVector& dstVars, ExprSet& actualVars)
     {
+      if (containsOp<IDIV>(tmpl) || containsOp<DIV>(tmpl) ||
+          containsOp<MOD>(tmpl) || containsOp<MULT>(tmpl)) return; // GF: to optimize
+
       int found = false;
       // very simple check if there are some srcVars and dstVars in the tmpl
       
@@ -144,18 +153,6 @@ namespace ufo
       expr::filter (term, bind::IsConst(), std::inserter (actualVars, actualVars.begin ()));
       
       term = rewriteMultAdd(term);
-      
-      if (hr.srcRelation == invRel)
-      {
-        term = findNonlinAndRewrite(term, hr.srcVars, invVars, extraVars);
-      }
-      
-      if (hr.dstRelation == invRel)
-      {
-        term = findNonlinAndRewrite(term, hr.dstVars, invVars, extraVars);
-      }
-      
-      for (auto &a : extraVars) actualVars.insert(a.second);
 
       bool locals = false;
       if (actualVars.size() == 0 || isTautology(term)) return;
@@ -171,7 +168,7 @@ namespace ufo
       {
         addSampleHlp(term, hr.dstVars, actualVars);
       }
-    
+
       if (hr.dstRelation == hr.srcRelation)
       {
         processTransition(term, hr.srcVars, hr.dstVars, actualVars);
@@ -208,7 +205,7 @@ namespace ufo
       else if (isOpX<IMPL>(term))
       {
         Expr term2 = mk<OR>(mkNeg(term->left()), term->right());
-        populateArityAndTemplates(convertToGEandGT(term2));
+        populateArityAndTemplates(term2);
       }
       else if (isOpX<GT>(term) || isOpX<GEQ>(term))
       {
@@ -247,8 +244,12 @@ namespace ufo
 
       if (quantified.size() > 0)
       {
-        AeValSolver ae(mk<TRUE>(hr.body->getFactory()), hr.body, quantified);
-        if (ae.solve()) body = ae.getValidSubset();
+        AeValSolver ae(mk<TRUE>(m_efac), hr.body, quantified);
+        if (ae.solve())
+        {
+          Expr bodyTmp = ae.getValidSubset();
+          if (bodyTmp != NULL) body = bodyTmp;
+        }
       }
 
       // get samples and normalize
