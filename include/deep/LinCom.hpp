@@ -1091,8 +1091,9 @@ namespace ufo
           guessUniformly(min_freq) / num_zeros / EPSILONFRACTION);
     }
 
-    void stabilizeDensities(set<int>& arities, bool addEpsilon)
+    void stabilizeDensities(set<int>& arities, bool addEpsilon, bool freqs=true)
     {
+      int freqCoef = freqs ? FREQCOEF : 1;
       int min_freq = INT_MAX;
       int num_zeros = 0;
       int eps = 0;
@@ -1102,14 +1103,14 @@ namespace ufo
         if (ar.second == 0) num_zeros++;
         else
         {
-          ar.second *= FREQCOEF;
+          ar.second *= freqCoef;
           min_freq = min(min_freq, ar.second);
         }
       }
 
       if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
         else if (num_zeros == orAritiesDensity.size()) eps = 1;
-         else eps = 0;
+          else eps = 0;
 
       for (auto & ar : orAritiesDensity)
       {
@@ -1125,7 +1126,7 @@ namespace ufo
           if (pl.second == 0) num_zeros++;
           else
           {
-            pl.second *= FREQCOEF;
+            pl.second *= freqCoef;
             min_freq = min(min_freq, pl.second);
           }
         }
@@ -1148,7 +1149,7 @@ namespace ufo
             if (c.second == 0) num_zeros++;
             else
             {
-              c.second *= FREQCOEF;
+              c.second *= freqCoef;
               min_freq = min(min_freq, c.second);
             }
           }
@@ -1170,7 +1171,7 @@ namespace ufo
           if (c.second == 0) num_zeros++;
           else
           {
-            c.second *= FREQCOEF;
+            c.second *= freqCoef;
             min_freq = min(min_freq, c.second);
           }
         }
@@ -1191,7 +1192,7 @@ namespace ufo
           if (c.second == 0) num_zeros++;
           else
           {
-            c.second *= FREQCOEF;
+            c.second *= freqCoef;
             min_freq = min(min_freq, c.second);
           }
         }
@@ -1214,7 +1215,7 @@ namespace ufo
             if (b.second == 0) num_zeros++;
             else
             {
-              b.second *= FREQCOEF;
+              b.second *= freqCoef;
               min_freq = min(min_freq, b.second);
             }
           }
