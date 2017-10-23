@@ -258,7 +258,7 @@ namespace ufo
       exit(55);
     }
     
-    if (res) return mk<FALSE> (efac);
+    if (res) return NULL;
     
     return fp.getCoverDelta(itpApp);
   }

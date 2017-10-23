@@ -393,7 +393,7 @@ namespace ufo
         
         return res;
       }
-      else if (isOp<ComparissonOp>(ex))
+      else if (isOpX<GEQ>(ex) || isOpX<GT>(ex))
       {
         LAterm s;
         Expr lhs = ex->left();
@@ -409,12 +409,14 @@ namespace ufo
         {
           all.push_back(lhs);
         }
-        
+
         Expr aux = reBuildCmp(ex, auxVar1, auxVar2);
 
         s.arity = all.size();
         s.cmpop = getVarIndex(aux, cmpOps);
         s.intconst = getVarIndex(lexical_cast<int>(ex->right()), intConsts);
+
+        if (s.intconst == -1 || s.cmpop == -1) return false;
         
         for (auto &e : all)
         {
@@ -440,8 +442,13 @@ namespace ufo
             curCoef = 1;
           }
           
-          s.vcs.push_back(getVarIndex(curVar, vars));
-          s.vcs.push_back(getVarIndex(curCoef, intCoefs));
+          int varind = getVarIndex(curVar, vars);
+          int coefind = getVarIndex(curCoef, intCoefs);
+
+          if (varind == -1 || coefind == -1) return false;
+
+          s.vcs.push_back(varind);
+          s.vcs.push_back(coefind);
           
         }
         bool res = addDisjFilter(s, sample);
@@ -451,6 +458,10 @@ namespace ufo
         for(int v : s.vcs) alpos &= (v >= 0);
         
         return (alpos && s.vcs.size() == 2*(s.arity));
+      }
+      else if (isOpX<NEG>(ex))
+      {
+        return false;
       }
       return false;
     }
@@ -892,7 +903,7 @@ namespace ufo
       for (int i = 0; i < failed.arity; i++)
       {
         LAterm& s = failed.dstate[i];
-        distrs[i][s.intconst * 2] = PRIORNOVISIT;
+        distrs[i][s.intconst * 2 + (getIndexGT() == s.cmpop ? 1 : 0)] = PRIORNOVISIT;
         isVisited(id, i);
       }
     }
@@ -926,7 +937,7 @@ namespace ufo
         isVisited(id, i);
       }
     }
-    
+
     void prioritiesLearnt(LAdisj& learnt)
     {
       lincoms& id = learnt.getId();
@@ -1028,6 +1039,8 @@ namespace ufo
     
     void assignPrioritiesForGarbage(LAdisj& failed)
     {
+      if (!aggressivepruning) return;
+
       vector<LAdisj> eqs;
       getEquivalentFormulas(failed, eqs);
       for (auto &a : eqs) prioritiesGarbage (a);
@@ -1110,7 +1123,7 @@ namespace ufo
 
       if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
         else if (num_zeros == orAritiesDensity.size()) eps = 1;
-          else eps = 0;
+         else eps = 0;
 
       for (auto & ar : orAritiesDensity)
       {

@@ -16,7 +16,7 @@ namespace ufo
 {
   class RndLearner
   {
-    private:
+    protected:
 
     ExprFactory &m_efac;
     EZ3 &m_z3;
@@ -31,8 +31,6 @@ namespace ufo
     vector<Expr> curCandidates;
     int invNumber;
     int numOfSMTChecks;
-
-    ExprSet itpCandidates;    // itp-based bounded candidates
 
     bool itp_succeeded;
     bool kind_succeeded;      // interaction with k-induction
@@ -52,7 +50,7 @@ namespace ufo
       invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k), itp_succeeded(!i),
       densecode(b1), addepsilon(b2), aggressivepruning(b3),
       printLog(false){}
-    
+
     bool isTautology (Expr a)     // adjusted for big disjunctions
     {
       if (isOpX<TRUE>(a)) return true;
@@ -82,7 +80,7 @@ namespace ufo
       }
       return res;
     }
-    
+
     bool checkCandidates()
     {
       for (auto &hr: ruleManager.chcs)
@@ -146,7 +144,7 @@ namespace ufo
       for (auto &cand : curCandidates) res = !isOpX<TRUE>(cand);
       return res;
     }
-    
+
     void assignPriorities()
     {
       for (int i = 0; i < invNumber; i++)
@@ -187,7 +185,7 @@ namespace ufo
         }
       }
     }
-    
+
     void resetLearntLemmas()
     {
       for (auto & lf : lfs)
@@ -249,26 +247,36 @@ namespace ufo
       return kind_succeeded;
     }
 
-    void checkBoundedProofsBootstrap (int bnd)
+    void bootstrapBoundedProofs (int bnd, ExprSet& cands)
     {
-      assert (bnd >= 2);
+      for (auto &hr: ruleManager.chcs)
+        if (findNonlin(hr.body))
+      {
+        outs () << "Nonlinear arithmetic detected.\nInterpolation is skipped\n";
+        return;
+      }
 
       BndExpl be(ruleManager);
-
-      HornRuleExt* pr;
-      for (auto & a : ruleManager.chcs) if (a.isQuery) pr = &a;
-
-      for (int i = 2; i <= bnd; i++)
+      Expr cand;
+      int k = 0;
+      while (k < bnd)
       {
-        Expr invTmp = be.getBoundedItp(i, pr->body, pr->srcVars);
-        ExprSet cnjs;
-        getConj(invTmp, cnjs);
+        cand = be.getBoundedItp(k);
+        k++;
+        if (cand == NULL)
+        {
+          outs () << "Counterexample is found.\nThe system does not have a solution.\n";
+          exit(0);
+        }
 
-        for (auto & a : cnjs) itpCandidates.insert(a);
+        ExprSet cnjs;
+        getConj(cand, cnjs);
+
+        for (auto & a : cnjs) cands.insert(a);
       }
     }
 
-    bool checkBoundedProofs ()
+    bool checkBoundedProofs (ExprSet& itpCandidates)
     {
       if (itp_succeeded) return false;
       assert(invNumber == 1);
@@ -286,7 +294,6 @@ namespace ufo
 
           if (checkSafety())
           {
-            outs () << "safety proven with itp\n";
             itp_succeeded = true;
             return true;
           }
@@ -341,7 +348,7 @@ namespace ufo
       for (auto a : safety_progress) if (a.second == false) return false;
       return true;
     }
-    
+
     void setupSafetySolver()
     {
       // setup the safety solver
@@ -420,7 +427,8 @@ namespace ufo
         for (auto & var : ruleManager.invVars[decls[ind]]) lf_after.addVar(var);
         lf_after.nonlinVars = lf_before.nonlinVars;
 
-        doCodeSampling(decls[ind]);
+        ExprSet stub;
+        doCodeSampling(decls[ind], stub);
 
         for (auto a : lf_before.learntExprs)
         {
@@ -455,7 +463,7 @@ namespace ufo
       for (auto & var : ruleManager.invVars[decls.back()]) lf.addVar(var);
     }
 
-    void doCodeSampling(Expr invRel)
+    void doCodeSampling(Expr invRel, ExprSet& cands)
     {
       vector<CodeSampler> css;
       set<int> orArities;
@@ -537,6 +545,7 @@ namespace ufo
           if (lf.exprToLAdisj(cand, lcs))
           {
             lcs.normalizePlus();
+            cands.insert(lf.toExpr(lcs));
             orArities.insert(lcs.arity);
           }
           else
@@ -652,8 +661,8 @@ namespace ufo
         lf.printCodeStatistics(orArities);
       }
     }
-    
-    void synthesize(int maxAttempts, char * outfile)
+
+    void synthesize(int maxAttempts, char * outfile, ExprSet& itpCands)
     {
       bool success = false;
       int iter = 1;
@@ -713,7 +722,7 @@ namespace ufo
         if (isInductive)
         {
           success = checkWithKInduction();
-          success = checkBoundedProofs();
+          success = checkBoundedProofs(itpCands);
         }
 
         if (success) break;
@@ -762,10 +771,9 @@ namespace ufo
       }
     }
   };
-  
-  
+
   inline void learnInvariants(string smt, char * outfile, int maxAttempts,
-                              bool kind=false, bool itp=false, bool b1=true, bool b2=true, bool b3=true)
+                              bool kind=false, int itp=0, bool b1=true, bool b2=true, bool b3=true)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
@@ -776,25 +784,29 @@ namespace ufo
 
     ds.setupSafetySolver();
     std::srand(std::time(0));
+    ExprSet itpCands;
 
     if (ruleManager.decls.size() > 1)
     {
-      outs() << "WARNING: learning multiple invariants is currently unstable\n"
+      outs () << "WARNING: learning multiple invariants is currently unstable\n"
              << "         it is suggested to disable \'aggressivepruning\'\n";
     }
-    else if (itp)
+    else if (itp > 0)
     {
+      outs () << "WARNING: For more efficient itp-based bootstrapping,\n"
+              << "         it is recommended to run --v2\n";
       // current limitation: ruleManager.decls.size() == 0
-      ds.checkBoundedProofsBootstrap(3);
+      ds.bootstrapBoundedProofs(itp, itpCands);
     }
 
+    ExprSet stub;
     for (auto& dcl: ruleManager.decls)
     {
       ds.initializeDecl(dcl);
-      ds.doCodeSampling (dcl->arg(0));
+      ds.doCodeSampling (dcl->arg(0), stub);
     }
 
-    ds.synthesize(maxAttempts, outfile);
+    ds.synthesize(maxAttempts, outfile, itpCands);
   };
 
 

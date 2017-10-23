@@ -74,20 +74,25 @@ namespace ufo
       }
     }
 
+    vector<ExprVector> bindVars;
+
     Expr toExpr(vector<int>& trace)
     {
       ExprVector ssa;
 
-      bindVars1 = ruleManager.chcs[trace[0]].srcVars;
       ExprVector bindVars2;
+      bindVars.clear();
+      ExprVector bindVars1 = ruleManager.chcs[trace[0]].srcVars;
       int bindVar_index = 0;
       int locVar_index = 0;
 
-      for (auto &step : trace)
+      for (int s = 0; s < trace.size(); s++)
       {
+        auto &step = trace[s];
         bindVars2.clear();
         HornRuleExt& hr = ruleManager.chcs[step];
         Expr body = hr.body;
+        if (!hr.isFact && extraLemmas != NULL) body = mk<AND>(extraLemmas, body);
 
         for (int i = 0; i < hr.srcVars.size(); i++)
         {
@@ -122,9 +127,9 @@ namespace ufo
           body = replaceAll(body, hr.locVars[i], var);
         }
 
-        bindVars1 = bindVars2;
-
         ssa.push_back(body);
+        bindVars.push_back(bindVars2);
+        bindVars1 = bindVars2;
       }
 
       return conjoin(ssa, m_efac);
@@ -224,30 +229,60 @@ namespace ufo
       return inv;
     }
 
-    Expr getBoundedItp(int bnd, Expr prop, ExprVector& vars)
+    Expr getBoundedItp(int k)
     {
-      vector<vector<int>> traces;
+      assert(k >= 0);
 
-      getAllTraces(mk<TRUE>(m_efac), ruleManager.failDecl, bnd, vector<int>(), traces);
-
-      for (auto &a : traces)
+      int fc_ind;
+      for (int i = 0; i < ruleManager.chcs.size(); i++)
       {
-        a.erase (a.end()-1); // encode all but the last step
-        Expr q = toExpr(a);
-        for (int i = 0; i < bindVars1.size(); i++) prop = replaceAll(prop, vars[i], bindVars1[i]);
+        auto & r = ruleManager.chcs[i];
+        if (r.isInductive) tr_ind = i;
+        if (r.isQuery) pr_ind = i;
+        if (r.isFact) fc_ind = i;
+      }
 
-        Expr itp = getItp(q, prop);
+      HornRuleExt& fc = ruleManager.chcs[fc_ind];
+      HornRuleExt& tr = ruleManager.chcs[tr_ind];
+      HornRuleExt& pr = ruleManager.chcs[pr_ind];
+
+      Expr prop = pr.body;
+      Expr init = fc.body;
+      for (int i = 0; i < tr.srcVars.size(); i++)
+      {
+        init = replaceAll(init, tr.dstVars[i],  tr.srcVars[i]);
+      }
+
+      Expr itp;
+
+      if (k == 0)
+      {
+        itp = getItp(init, prop);
+      }
+      else
+      {
+        vector<int> trace;
+        for (int i = 0; i < k; i++) trace.push_back(tr_ind);
+
+        Expr unr = toExpr(trace);
+        for (int i = 0; i < pr.srcVars.size(); i++)
+        {
+          prop = replaceAll(prop, pr.srcVars[i], bindVars.back()[i]);
+        }
+        itp = getItp(unr, prop);
         if (itp != NULL)
         {
-          for (int i = 0; i < bindVars1.size(); i++) itp = replaceAll(itp, bindVars1[i], vars[i]);
-          return itp;
+          for (int i = 0; i < pr.srcVars.size(); i++)
+          {
+            itp = replaceAll(itp, bindVars.back()[i], pr.srcVars[i]);
+          }
         }
         else
         {
-          return NULL;
+          itp = getItp(init, mk<AND>(unr, prop));
         }
       }
-      return NULL;
+      return itp;
     }
   };
 

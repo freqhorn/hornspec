@@ -977,7 +977,7 @@ namespace ufo
         for (unsigned j = 0; j < t->arity(); j++)
         {
           Expr q = t->arg(j);
-          if (expr::op::bind::isIntConst(q))
+          if (bind::isIntConst(q))
           {
             int ind = getVarIndex(q, vars);
             if (ind == -1) return t;
@@ -1021,14 +1021,52 @@ namespace ufo
       return t;
     }
   };
-  
+
   inline static Expr findNonlinAndRewrite (Expr exp, ExprVector& vars, ExprVector& vars2, ExprMap& extraVars)
   {
     RW<FindNonlinAndRewrite> mu(new FindNonlinAndRewrite(vars, vars2, extraVars));
     return dagVisit (mu, exp);
   }
-  
-  
+
+  struct FindNonlin : public std::unary_function<Expr, VisitAction>
+  {
+    bool found;
+
+    FindNonlin () : found (false) {}
+
+    VisitAction operator() (Expr exp)
+    {
+      if (found)
+      {
+        found = true;
+        return VisitAction::skipKids ();
+      }
+      else if (isOpX<MULT>(exp) || isOpX<MOD>(exp) || isOpX<DIV>(exp) || isOpX<IDIV>(exp))
+      {
+        int v = 0;
+        for (unsigned j = 0; j < exp->arity(); j++)
+        {
+          Expr q = exp->arg(j);
+          if (bind::isIntConst(q)) v++;     // GF: a simple counter, to extend
+        }
+
+        if (v > 1)
+        {
+          found = true;
+          return VisitAction::skipKids ();
+        }
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
+  inline bool findNonlin (Expr e1)
+  {
+    FindNonlin fn;
+    dagVisit (fn, e1);
+    return fn.found;
+  }
+
   inline static void getConj (Expr a, ExprSet &conjs)
   {
     if (isOpX<TRUE>(a)) return;
