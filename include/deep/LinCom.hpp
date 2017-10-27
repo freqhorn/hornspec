@@ -221,7 +221,7 @@ namespace ufo
     map<int, density> cmpOpDensity;
     map<int, vector<density>> varDensity;
     map<int, map<int, density>> coefDensity;
-    map<int, vector<vector<set<int>>>> varCombinations;
+    vector<vector<set<int>>> varCombinations;
     vector<LAdisj> samples;
     vector<int> learntLemmas;    // indeces to samples
     ExprSet learntExprs;   // lemmas from learntLemmas
@@ -743,7 +743,7 @@ namespace ufo
         LAterm& la = terms.back();
         la.arity = chooseByWeight(plusAritiesDensity[arity]);
         
-        vector<set<int>>& varCombination = varCombinations[arity][la.arity];
+        vector<set<int>>& varCombination = varCombinations[la.arity];
         int comb = chooseByWeight(varDensity[arity][la.arity]);
         varcombs.push_back(varCombination[comb]);
       }
@@ -1048,6 +1048,14 @@ namespace ufo
     
     void initDensities(set<int>& arities)
     {
+      // preparing var combinations;
+      varCombinations.push_back(vector<set<int>>());     // empty ones; not used
+      for (int i = 1; i <= vars.size(); i++)
+      {
+        varCombinations.push_back(vector<set<int>>());
+        getCombinations(varInds, 0, i, varCombinations.back());
+      }
+
       for (auto ar : arities) initDensities(ar);
     }
     
@@ -1074,19 +1082,15 @@ namespace ufo
       {
         cmpOpDensity[ar][i] = 0;
       }
-      
+
       // preparing var densities;
-      varCombinations[ar].push_back(vector<set<int>>()); // empty ones; not used
-      varDensity[ar].push_back(density());               //
-      
+      varDensity[ar].push_back(density());
+
       for (int i = 1; i <= vars.size(); i++)
       {
-        varCombinations[ar].push_back(vector<set<int>>());
         varDensity[ar].push_back(density());
-        
-        getCombinations(varInds, 0, i, varCombinations[ar].back());
-        
-        for (int j = 0; j < varCombinations[ar].back().size(); j++)
+
+        for (int j = 0; j < varCombinations[i].size(); j++)
         {
           varDensity[ar].back()[j] = 0;
         }
@@ -1284,7 +1288,7 @@ namespace ufo
         {
           outs() << " Var Combination density: ";
           
-          for (int j : varCombinations[ar][i][b.first])
+          for (int j : varCombinations[i][b.first])
           {
             outs() << *vars[j] << ", ";
           }
@@ -1340,7 +1344,6 @@ namespace ufo
       }
     }
   };
-  
 }
 
 

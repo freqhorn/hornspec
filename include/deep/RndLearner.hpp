@@ -28,26 +28,25 @@ namespace ufo
     CHCs& ruleManager;
     vector<Expr> decls;
     vector<vector<LAfactory>> lfs;
+    vector<LAdisj> lcss;
     vector<Expr> curCandidates;
     int invNumber;
     int numOfSMTChecks;
 
-    bool itp_succeeded;
     bool kind_succeeded;      // interaction with k-induction
     bool oneInductiveProof;
 
     bool densecode;           // catch various statistics about the code (mostly, frequences) and setup the prob.distribution based on them
     bool addepsilon;          // add some small probability to features that never happen in the code
     bool aggressivepruning;   // aggressive pruning of the search space based on SAT/UNSAT (WARNING: may miss some invariants)
-    bool kinduction;
 
     bool printLog;
 
     public:
-    
-    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool k, bool i, bool b1, bool b2, bool b3) :
+
+    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool k, bool b1, bool b2, bool b3) :
       m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac),
-      invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k), itp_succeeded(!i),
+      invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k),
       densecode(b1), addepsilon(b2), aggressivepruning(b3),
       printLog(false){}
 
@@ -278,7 +277,6 @@ namespace ufo
 
     bool checkBoundedProofs (ExprSet& itpCandidates)
     {
-      if (itp_succeeded) return false;
       assert(invNumber == 1);
 
       for (auto it = itpCandidates.begin(), end = itpCandidates.end(); it != end; )
@@ -294,7 +292,6 @@ namespace ufo
 
           if (checkSafety())
           {
-            itp_succeeded = true;
             return true;
           }
         }
@@ -429,6 +426,7 @@ namespace ufo
 
         ExprSet stub;
         doCodeSampling(decls[ind], stub);
+        calculateStatistics(decls[ind]);
 
         for (auto a : lf_before.learntExprs)
         {
@@ -466,7 +464,6 @@ namespace ufo
     void doCodeSampling(Expr invRel, ExprSet& cands)
     {
       vector<CodeSampler> css;
-      set<int> orArities;
       set<int> progConstsTmp;
       set<int> progConsts;
       set<int> intCoefs;
@@ -478,25 +475,23 @@ namespace ufo
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
-        
+
         css.push_back(CodeSampler(hr, invRel, lf.getVars(), lf.nonlinVars));
         css.back().analyzeCode();
-        
+
+        if (hr.isInductive) css.back().analyzeExtras(cands);
+
         // convert intConsts to progConsts and add additive inverses (if applicable):
         for (auto &a : css.back().intConsts)
         {
           progConstsTmp.insert( a);
           progConstsTmp.insert(-a);
         }
-        
+
         // same for intCoefs
-        for (auto &a : css.back().intCoefs)
-        {
-          intCoefs.insert( a);
-          intCoefs.insert(-a);
-        }
+        for (auto &a : css.back().intCoefs) intCoefs.insert(a);
       }
-      
+
       if (lf.nonlinVars.size() > 0)
       {
         if (printLog) outs() << "Multed vars: ";
@@ -504,9 +499,12 @@ namespace ufo
         {
           if (printLog) outs() << *a.first << " = " << *a.second << "\n";
           lf.addVar(a.second);
+          Expr b = a.first->right();
+          if (isNumericConst(b)) intCoefs.insert(lexical_cast<int>(b));
         }
       }
-      
+
+      for (auto &a : intCoefs) intCoefs.insert(-a);
       for (auto &a : intCoefs) if (a != 0) lf.addIntCoef(a);
 
       for (auto &a : intCoefs)
@@ -516,7 +514,7 @@ namespace ufo
           progConsts.insert(a*b);
         }
       }
-      
+
       // sort progConsts and push to vector:
       while (progConsts.size() > 0)
       {
@@ -531,37 +529,53 @@ namespace ufo
         progConsts.erase(min);
         lf.addConst(min);
       }
-      
+
       lf.initialize();
 
-      // normalize samples obtained from CHCs and calculate various statistics:
-      vector<LAdisj> lcss;
+      ExprSet allCands;
       for (auto &cs : css)
       {
         for (auto &cand : cs.candidates)
         {
-          lcss.push_back(LAdisj());
-          LAdisj& lcs = lcss.back();
-          if (lf.exprToLAdisj(cand, lcs))
-          {
-            lcs.normalizePlus();
-            cands.insert(lf.toExpr(lcs));
-            orArities.insert(lcs.arity);
-          }
-          else
-          {
-            lcss.pop_back();
-          }
+          allCands.insert(cand);
         }
       }
-      
+
+      // normalize samples obtained from CHCs
+      for (auto & cand : allCands)
+      {
+        lcss.push_back(LAdisj());
+        LAdisj& lcs = lcss.back();
+        if (lf.exprToLAdisj(cand, lcs))
+        {
+          lcs.normalizePlus();
+          cands.insert(lf.toExpr(lcs));   // do it here because cand may contain artif. vars
+        }
+        else
+        {
+          lcss.pop_back();
+        }
+      }
+    }
+
+    void calculateStatistics(Expr invRel)
+    {
+      int ind = getVarIndex(invRel, decls);
+      LAfactory& lf = lfs[ind].back();
+
+      set<int> orArities;
+
+      for (auto &lcs : lcss)
+      {
+        orArities.insert(lcs.arity);
+      }
+
       if (orArities.size() == 0)                // default, if no samples were obtained from the code
       {
         for (int i = 1; i <= DEFAULTARITY; i++) orArities.insert(i);
       }
       
       lf.initDensities(orArities);
-      
       if (densecode)
       {
         // collect number of occurrences....
@@ -572,24 +586,24 @@ namespace ufo
 
           // of arities of application of OR
           lf.orAritiesDensity[ar] ++;
-          
+
           for (auto & lc : lcs.dstate)
           {
             // of arities of application of PLUS
             lf.plusAritiesDensity[ar][lc.arity] ++;
-            
+
             // of constants
             lf.intConstDensity[ar][lc.intconst] ++;
-            
+
             // of comparison operations
             lf.cmpOpDensity[ar][lc.cmpop] ++;
-            
+
             set<int> vars;
             int vars_id = -1;
             for (int j = 0; j < lc.vcs.size(); j = j+2) vars.insert(lc.vcs[j]);
-            for (int j = 0; j < lf.varCombinations[ar][lc.arity].size(); j++)
+            for (int j = 0; j < lf.varCombinations[lc.arity].size(); j++)
             {
-              if (lf.varCombinations[ar][lc.arity][j] == vars)
+              if (lf.varCombinations[lc.arity][j] == vars)
               {
                 vars_id = j;
                 break;
@@ -632,9 +646,9 @@ namespace ufo
             set<int> vars;
             int vars_id = -1;
             for (int j = 0; j < lc.vcs.size(); j = j+2) vars.insert(lc.vcs[j]);
-            for (int j = 0; j < lf.varCombinations[ar][lc.arity].size(); j++)
+            for (int j = 0; j < lf.varCombinations[lc.arity].size(); j++)
             {
-              if (lf.varCombinations[ar][lc.arity][j] == vars)
+              if (lf.varCombinations[lc.arity][j] == vars)
               {
                 vars_id = j;
                 break;
@@ -654,7 +668,8 @@ namespace ufo
         }
       }
 
-      lf.stabilizeDensities(orArities, addepsilon);
+      lf.stabilizeDensities(orArities, addepsilon, densecode);
+
       if (printLog)
       {
         outs() << "\nStatistics for " << *invRel << ":\n";
@@ -666,11 +681,11 @@ namespace ufo
     {
       bool success = false;
       int iter = 1;
-    
+
       for (int i = 0; i < maxAttempts; i++)
       {
         // first, guess candidates for each inv.declaration
-        
+
         bool skip = false;
         for (int j = 0; j < invNumber; j++)
         {
@@ -780,7 +795,7 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    RndLearner ds(m_efac, z3, ruleManager, kind, itp, b1, b2, b3);
+    RndLearner ds(m_efac, z3, ruleManager, kind, b1, b2, b3);
 
     ds.setupSafetySolver();
     std::srand(std::time(0));
@@ -803,7 +818,8 @@ namespace ufo
     for (auto& dcl: ruleManager.decls)
     {
       ds.initializeDecl(dcl);
-      ds.doCodeSampling (dcl->arg(0), stub);
+      ds.doCodeSampling(dcl->arg(0), stub);
+      ds.calculateStatistics(dcl->arg(0));
     }
 
     ds.synthesize(maxAttempts, outfile, itpCands);
@@ -817,7 +833,7 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(string(chcfile));
-    RndLearner ds(m_efac, z3, ruleManager, false, false, false, false, false);
+    RndLearner ds(m_efac, z3, ruleManager, false, false, false, false);
     ds.setupSafetySolver();
 
     vector<string> invNames;

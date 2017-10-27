@@ -21,10 +21,14 @@ namespace ufo
 
     map<Expr, ExprSet> modelsOfFailures;
 
+    vector<HornRuleExt*> tr;
+    vector<HornRuleExt*> fc;
+    vector<HornRuleExt*> qr;
+
     public:
 
-    RndLearnerV2 (ExprFactory &efac, EZ3 &z3, CHCs& r, bool aggp) :
-      RndLearner (efac, z3, r, false, false, true, true, aggp){}
+    RndLearnerV2 (ExprFactory &efac, EZ3 &z3, CHCs& r, bool freqs, bool aggp) :
+      RndLearner (efac, z3, r, /*k-induction*/ false, freqs, /*epsilon*/ true, aggp){}
 
     Expr getModel(ExprVector& vars)
     {
@@ -44,6 +48,14 @@ namespace ufo
     ExprSet& getLearntLemmas(int num)
     {
       return lfs[num].back().learntExprs;
+    }
+
+    void categorizeCHCs()
+    {
+      for (auto & a : ruleManager.chcs)
+        if (a.isInductive) tr.push_back(&a);
+        else if (a.isFact) fc.push_back(&a);
+        else if (a.isQuery) qr.push_back(&a);
     }
 
     int redundancyCheck (ExprVector& lemmas)
@@ -66,31 +78,23 @@ namespace ufo
       return num;
     }
 
-    bool checkSafetyAndReset()
+    bool checkSafetyAndReset(HornRuleExt* qu)
     {
-      // works if number of queries == 1 so far
       m_smt_solver.reset();
+      m_smt_solver.assertExpr (qu->body);
 
-      for (auto &hr: ruleManager.chcs)
+      int ind = getVarIndex(qu->srcRelation, decls);
+      LAfactory& lf = lfs[ind].back();
+
+      Expr lmApp = conjoin(lf.learntExprs, m_efac);
+      for (int i = 0; i < qu->srcVars.size(); i++)
       {
-        if (!hr.isQuery) continue;
-
-        m_smt_solver.assertExpr (hr.body);
-
-        int ind = getVarIndex(hr.srcRelation, decls);
-        LAfactory& lf = lfs[ind].back();
-
-        Expr lmApp = conjoin(lf.learntExprs, m_efac);
-        for (int i = 0; i < hr.srcVars.size(); i++)
-        {
-          lmApp = replaceAll(lmApp, lf.getVarE(i), hr.srcVars[i]);
-        }
-        m_smt_solver.assertExpr(lmApp);
-
-        numOfSMTChecks++;
-        return !m_smt_solver.solve ();
+        lmApp = replaceAll(lmApp, lf.getVarE(i), qu->srcVars[i]);
       }
-      return true;
+      m_smt_solver.assertExpr(lmApp);
+
+      numOfSMTChecks++;
+      return !m_smt_solver.solve ();
     }
 
     void getIS(HornRuleExt* hr, ExprVector& candSet)
@@ -155,26 +159,23 @@ namespace ufo
       ExprVector exprs;
       for (auto & a : cands) exprs.push_back(a);
 
-      HornRuleExt* tr;
-      HornRuleExt* fc;
-      for (auto & a : ruleManager.chcs) if (a.isInductive) tr = &a; else if (a.isFact) fc = &a;
-
       // initiation: remove crap first
       if (!skipInit)
       {
-        for (int i = exprs.size() - 1; i >= 0; i--)
-        {
-          if (!initCheckCand(fc, exprs[i]))
+        for (auto a : fc)
+          for (int i = exprs.size() - 1; i >= 0; i--)
           {
-            LAdisj lcs;
-            if (lf.exprToLAdisj(exprs[i], lcs)) lf.assignPrioritiesForFailed(lcs);
-            exprs.erase(exprs.begin()+i);
+            if (!initCheckCand(a, exprs[i]))
+            {
+              LAdisj lcs;
+              if (lf.exprToLAdisj(exprs[i], lcs)) lf.assignPrioritiesForFailed(lcs);
+              exprs.erase(exprs.begin()+i);
+            }
           }
-        }
       }
 
       // consecution
-      getIS(tr, exprs);
+      for (auto a : tr) getIS(a, exprs);
 
       // safety:
       int num = exprs.size();
@@ -182,18 +183,15 @@ namespace ufo
 
       if (newLemmaAdded == 0) return false;
 
-      if (checkSafetyAndReset()) return true;
+      for (auto a : qr) if (!checkSafetyAndReset(a)) return false;
 
-      return false;
+      return true;
     }
 
     bool synthesize(int maxAttempts, int batchSz, int scndChSz)
     {
       assert(lfs.size() == 1); // current limitation
 
-      HornRuleExt* tr;
-      HornRuleExt* fct;
-      for (auto & a : ruleManager.chcs) if (a.isInductive) tr = &a; else if (a.isFact) fct = &a;
       LAfactory& lf = lfs[0].back();
 
       ExprVector candsBatch;
@@ -226,21 +224,26 @@ namespace ufo
 
           iter++;
 
-          if (!initCheckCand(fct, cand))
-          {
-            numFailInit++;
-            lf.assignPrioritiesForFailed(lf.samples.back());
-            continue;
-          }
+          bool toskip = false;
+          for (auto a : fc)
+            if (!initCheckCand(a, cand))
+            {
+              numFailInit++;
+              lf.assignPrioritiesForFailed(lf.samples.back());
+              toskip = true;
+              break;
+            }
+          if (toskip) continue;
 
           candsBatch.push_back(cand);
         }
 
-        getIS(tr, candsBatch);     // houdini
+        for (auto a : tr) getIS(a, candsBatch);      // houdini
 
         if (candsBatch.size() == 0) continue;
 
-        success = checkSafetyAndReset();
+        success = true;
+        for (auto a : qr) success = success && checkSafetyAndReset(a);
         if (success) break;
 
         // second chance candidates
@@ -273,22 +276,23 @@ namespace ufo
     }
   };
   
-  inline void learnInvariants2(string smt, char * outfile, int maxAttempts, int itp, int batch, int retry, bool aggp)
+  inline void learnInvariants2(string smt, char * outfile, int maxAttempts,
+                               int itp, int batch, int retry, bool freqs, bool aggp)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    RndLearnerV2 ds(m_efac, z3, ruleManager, aggp);
+    RndLearnerV2 ds(m_efac, z3, ruleManager, freqs, aggp);
+    ds.categorizeCHCs();
 
-    ds.setupSafetySolver();
     std::srand(std::time(0));
 
     if (ruleManager.decls.size() > 1)
     {
       outs() << "WARNING: learning multiple invariants is currently unsupported in --v2.\n"
-      << "         Run --v1\n";
+             << "         Run --v1\n";
       return;
     }
 
@@ -308,6 +312,8 @@ namespace ufo
     }
     else
     {
+      for (auto& dcl: ruleManager.decls) ds.calculateStatistics(dcl->arg(0));
+
       success = ds.synthesize(maxAttempts, batch, retry);
       if (success) outs () << "Total number of learned lemmas: " << ds.getLearntLemmas(0).size() << "\n";
 

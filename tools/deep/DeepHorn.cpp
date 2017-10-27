@@ -63,11 +63,11 @@ int main (int argc, char ** argv)
         " " << OPT_V1 << "                            original version (just one-by-one sampling)\n"
         " " << OPT_V2 << " (default)                  revised version (all-at once bootstrapping and sampling)\n\n"
         " " << OPT_MAX_ATTEMPTS << " <N>                  maximal number of candidates to sample and check\n" <<
-        " " << OPT_OUT_FILE << " <file.smt2>               serialize invariants to `file.smt2`\n\n" <<
+        " " << OPT_OUT_FILE << " <file.smt2>               serialize invariants to `file.smt2`\n" <<
+        " " << OPT_GET_FREQS << "                         calculate frequency distributions and sample from them\n\n" <<
         "V1 options only:\n" <<
         " " << OPT_ADD_EPSILON << "                           add small probabilities to features that never happen in the code\n" <<
         " " << OPT_AGG_PRUNING << "                          prioritize and prune the search space aggressively\n" <<
-        " " << OPT_GET_FREQS << "                         calculate frequency distributions and sample from them\n" <<
         "                                 (if not specified, sample from uniform distributions)\n" <<
         " " << OPT_K_IND << "                          run k-induction after each learned lemma\n\n" <<
         "V2 options only:\n" <<
@@ -101,7 +101,7 @@ int main (int argc, char ** argv)
 
   if (vers2)  // run a revised algorithm
     learnInvariants2(string(argv[argc-1]), outfile, maxAttempts,
-                  itp, batch, retry, aggressivepruning);
+                  itp, batch, retry, densecode, aggressivepruning);
   else        // run an old algorithm
     learnInvariants(string(argv[argc-1]), outfile, maxAttempts,
                   kinduction, itp, densecode, addepsilon, aggressivepruning);

@@ -231,13 +231,13 @@ namespace ufo
         for (auto &a: args)
         {
           bool found = false;
-          for (auto &b : hr.dstVars)
+          for (auto &b : origDstVars)
           {
             if (a == b) found = true;
           }
           if (! found)
           {
-            for (auto &b : hr.srcVars)
+            for (auto &b : origSrcVars)
             {
               if (a == b) found = true;
             }

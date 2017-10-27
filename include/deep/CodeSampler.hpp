@@ -12,32 +12,22 @@ namespace ufo
   class CodeSampler
   {
     public:
-    
+
     ExprSet candidates;
-    
+
     set<int> intConsts;
     set<int> intCoefs;
-    
+
     HornRuleExt& hr;
     Expr invRel;
     ExprVector invVars;
     ExprMap& extraVars;
-    
-    Expr zero;
-    ExprFactory &m_efac;
-    
-    CodeSampler(HornRuleExt& r, Expr& d, ExprVector& v, ExprMap& e) :
-      hr(r), invRel(d), invVars(v), extraVars(e), m_efac(d->getFactory())
-    {
-      // add some "universal" constants
-      intConsts.insert(0);
-      intConsts.insert(1);
-      intConsts.insert(-1);
 
-      // aux Expr const
-      zero = mkTerm (mpz_class (0), m_efac);
-    };
-    
+    ExprFactory &m_efac;
+
+    CodeSampler(HornRuleExt& r, Expr& d, ExprVector& v, ExprMap& e) :
+      hr(r), invRel(d), invVars(v), extraVars(e), m_efac(d->getFactory()) {};
+
     void addSampleHlp(Expr tmpl, ExprVector& vars, ExprSet& actualVars)
     {
       ExprSet dsjs;
@@ -74,77 +64,24 @@ namespace ufo
 
       for (auto &a : extraVars) invVarsCstm.push_back(a.second);
 
-      tmpl = normalizeDisj(tmpl, invVarsCstm);
-
-      if (!isOpX<FALSE> (tmpl) && !isOpX<TRUE> (tmpl))
+      try
       {
-        candidates.insert(tmpl);
-        
-        // get int constants from the normalized candidate
-        ExprSet intConstsE;
-        expr::filter (tmpl, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
-        
-        for (auto &a : intConstsE) intConsts.insert(lexical_cast<int>(a));
-        getLinCombCoefs(tmpl, intCoefs);
-      }
-    }
-    
-    void processTransition(Expr tmpl, ExprVector& srcVars, ExprVector& dstVars, ExprSet& actualVars)
-    {
-      if (containsOp<IDIV>(tmpl) || containsOp<DIV>(tmpl) ||
-          containsOp<MOD>(tmpl) || containsOp<MULT>(tmpl)) return; // GF: to optimize
+        tmpl = normalizeDisj(tmpl, invVarsCstm);
 
-      int found = false;
-      // very simple check if there are some srcVars and dstVars in the tmpl
-      
-      for (auto &v0 : srcVars)
-      {
-        for (auto &v1 : actualVars)
+        if (!isOpX<FALSE> (tmpl) && !isOpX<TRUE> (tmpl))
         {
-          if (v0 == v1)
-          {
-            found = true;
-            break;
-          }
-        }
-      }
-      
-      if (! found) return;
-      
-      found = false;
-      for (auto &v0 : dstVars)
-      {
-        for (auto &v1 : actualVars)
-        {
-          if (v0 == v1)
-          {
-            found = true;
-            break;
-          }
-        }
-      }
-      
-      if (! found) return;
-      
-      for (auto &v : actualVars)
-      {
-        int index1 = getVarIndex(v, srcVars);
-        int index2 = getVarIndex(v, dstVars);
-        if (index1 == -1 && index2 == -1) return;
-      }
-      
-      ExprVector vars;
-      for (auto &v : actualVars) vars.push_back(v);
+          candidates.insert(tmpl);
 
-      ExprSet intCoefsE;
-      expr::filter (normalizeDisj(tmpl, vars), bind::IsHardIntConst(), std::inserter (intCoefsE, intCoefsE.begin ()));
-      
-      for (auto &a : intCoefsE)
-      {
-        intCoefs.insert(lexical_cast<int>(a));
-      }
+          // get int constants from the normalized candidate
+          ExprSet intConstsE;
+          expr::filter (tmpl, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
+
+          for (auto &a : intConstsE) intConsts.insert(lexical_cast<int>(a));
+          getLinCombCoefs(tmpl, intCoefs);
+        }
+      } catch (const boost::bad_lexical_cast& e) { /*TBD*/ }
     }
-    
+
     void addSample(Expr term)
     {
       ExprSet actualVars;
@@ -167,11 +104,6 @@ namespace ufo
       if (hr.dstRelation == invRel)
       {
         addSampleHlp(term, hr.dstVars, actualVars);
-      }
-
-      if (hr.dstRelation == hr.srcRelation)
-      {
-        processTransition(term, hr.srcVars, hr.dstVars, actualVars);
       }
     }
     
@@ -216,7 +148,20 @@ namespace ufo
         populateArityAndTemplates(convertToGEandGT(term));
       }
     }
-    
+
+    void coreProcess(Expr e)
+    {
+      e = moveInsideITE(e);
+      e = unfoldITE(e);
+      e = convertToGEandGT(e);
+      populateArityAndTemplates(e);
+    }
+
+    void analyzeExtras(ExprSet& extra)
+    {
+      for (auto &cnj : extra) coreProcess(cnj);
+    }
+
     void analyzeCode()
     {
       if (false) // printing only
@@ -228,11 +173,11 @@ namespace ufo
         outs() << "dst vars: ";
         for (int i = 0; i < hr.dstVars.size(); i++) outs() << "[" << *invVars[i] << "] = " << *hr.dstVars[i] << ", ";
         outs() << "\n";
+        outs() << "local vars: ";
+        for (auto & a : hr.locVars) outs() << *a << ", ";
+        outs() << "\n";
         outs() << "body: " << *hr.body << "\n\n";
       }
-      
-      intCoefs.insert(1);
-      intConsts.insert(0);
 
       Expr body = hr.body;
 
@@ -253,26 +198,37 @@ namespace ufo
       }
 
       // get samples and normalize
+      ExprSet conds;
+      retrieveConds(body, conds);
+      for (auto & a : conds) populateArityAndTemplates(a);
+
       // for the query: add a negation of the entire non-recursive part:
       if (hr.isQuery)
       {
         Expr massaged = propagateEqualities(body);
-        massaged = unfoldITE(mkNeg(massaged));
-        massaged = convertToGEandGT(massaged);
-        populateArityAndTemplates(massaged);
+        coreProcess(mkNeg(massaged));
+      }
+      else if (hr.isFact)
+      {
+        coreProcess(body);
       }
       else
       {
-        // for others: the entire non-recursive part
-        ExprSet lin;
-        getConj(body, lin);
-        for (auto &cnj : lin)
+        // hr.isInductive
+        Expr e = unfoldITE(body);
+
+        ExprSet deltas; // some magic here for enhancing the grammar
+        retrieveDeltas(e, hr.srcVars, hr.dstVars, deltas);
+        for (auto & a : deltas)
         {
-          // GF: todo: make sure all constants in the code are Ints (otherwise, z3 could be unpredictable)
-          Expr massaged = unfoldITE(cnj);
-          massaged = convertToGEandGT(massaged);
-          populateArityAndTemplates(massaged);
+          populateArityAndTemplates(a);
         }
+
+        e = overapproxTransitions(e, hr.srcVars, hr.dstVars);
+
+        e = simplifyBool(e);
+        e = convertToGEandGT(e);
+        populateArityAndTemplates(e);
       }
     }
   };
