@@ -97,7 +97,16 @@ namespace ufo
     }
     return true;
   }
-  
+
+  inline static bool isEmpty(density& d)
+  {
+    for (int i = 0; i < d.size(); i++)
+    {
+      if (d[i] > 0) return false;
+    }
+    return true;
+  }
+
   inline static void printDistr(weights& distr, string msg)
   {
     if (msg != "" ) outs () << msg << ": ";
@@ -107,6 +116,43 @@ namespace ufo
       outs() << distr[j] << ", ";
     }
     outs () << "]\n";
+  }
+
+  static inline void getCombinations(vector<int>& data, int start, int rem, vector< set<int> >& res)
+  {
+    if (start >= data.size()) return;
+    if (rem > data.size() - start) return;
+
+    if (rem == 1)
+    {
+      for (int i = start; i < data.size(); i++)
+      {
+        set<int> res0;
+        res0.insert(data[i]);
+        res.push_back(res0);
+      }
+    }
+    else
+    {
+      // if include data[start]
+      vector< set<int>> res1;
+      getCombinations(data, start + 1, rem - 1, res1);
+
+      for (int i = 0; i < res1.size(); i++)
+      {
+        res1[i].insert(data[start]);
+        res.push_back(res1[i]);
+      }
+
+      // if skip data[start]
+      vector< set<int>> res2;
+      getCombinations(data, start + 1, rem, res2);
+
+      for (int i = 0; i < res2.size(); i++)
+      {
+        res.push_back(res2[i]);
+      }
+    }
   }
 }
 

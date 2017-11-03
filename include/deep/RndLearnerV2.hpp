@@ -1,15 +1,7 @@
 #ifndef RNDLEARNERV2__HPP__
 #define RNDLEARNERV2__HPP__
 
-#include "Horn.hpp"
-#include "CodeSampler.hpp"
-#include "Distribution.hpp"
-#include "LinCom.hpp"
-#include "BndExpl.hpp"
 #include "RndLearner.hpp"
-#include "ae/SMTUtils.hpp"
-#include <iostream>
-#include <fstream>
 
 using namespace std;
 using namespace boost;
@@ -24,6 +16,10 @@ namespace ufo
     vector<HornRuleExt*> tr;
     vector<HornRuleExt*> fc;
     vector<HornRuleExt*> qr;
+
+    ExprSet deferredLearned;
+    ExprSet deferredFailed;
+    ExprSet deferredBlocked;
 
     public:
 
@@ -45,9 +41,9 @@ namespace ufo
       return conjoin (eqs, m_efac);
     }
 
-    ExprSet& getLearntLemmas(int num)
+    ExprSet& getlearnedLemmas(int num)
     {
-      return lfs[num].back().learntExprs;
+      return sfs[num].back().learnedExprs;
     }
 
     void categorizeCHCs()
@@ -58,20 +54,25 @@ namespace ufo
         else if (a.isQuery) qr.push_back(&a);
     }
 
-    int redundancyCheck (ExprVector& lemmas)
+    int redundancyCheck (ExprVector& lemmas, bool deferPriorities)
     {
       int num = 0;
-      LAfactory& lf = lfs[0].back();
-      Expr allLemmas = conjoin(lf.learntExprs, m_efac);
+      SamplFactory& sf = sfs[0].back();
       for (auto & l : lemmas)
       {
-        LAdisj lcs;
-        if (lf.exprToLAdisj(l, lcs)) lf.assignPrioritiesForLearnt(lcs);
-
-        numOfSMTChecks++;
-        if (!u.isImplies(allLemmas, l))
+        if (deferPriorities)
         {
-          lf.learntExprs.insert(l);
+          deferredLearned.insert(l);
+        }
+        else
+        {
+          Sampl& s = sf.exprToSampl(l);
+          if (!s.empty()) sf.assignPrioritiesForLearned();
+        }
+        numOfSMTChecks++;
+        if (!u.isImplies(sf.getAllLemmas(), l))
+        {
+          sf.learnedExprs.insert(l);
           num++;
         }
       }
@@ -84,12 +85,12 @@ namespace ufo
       m_smt_solver.assertExpr (qu->body);
 
       int ind = getVarIndex(qu->srcRelation, decls);
-      LAfactory& lf = lfs[ind].back();
+      SamplFactory& sf = sfs[ind].back();
 
-      Expr lmApp = conjoin(lf.learntExprs, m_efac);
+      Expr lmApp = sf.getAllLemmas();
       for (int i = 0; i < qu->srcVars.size(); i++)
       {
-        lmApp = replaceAll(lmApp, lf.getVarE(i), qu->srcVars[i]);
+        lmApp = replaceAll(lmApp, invarVars[ind][i], qu->srcVars[i]);
       }
       m_smt_solver.assertExpr(lmApp);
 
@@ -97,10 +98,10 @@ namespace ufo
       return !m_smt_solver.solve ();
     }
 
-    void getIS(HornRuleExt* hr, ExprVector& candSet)
+    void getIS(HornRuleExt* hr, ExprVector& candSet, bool deferPriorities)
     {
       if (candSet.size() == 0) return;
-      LAfactory& lf = lfs[0].back();
+      SamplFactory& sf = sfs[0].back();
 
       Expr cands = conjoin (candSet, m_efac);
 
@@ -116,8 +117,7 @@ namespace ufo
         m_smt_solver.reset();
         m_smt_solver.assertExpr (hr->body);
         m_smt_solver.assertExpr (cands);
-        for (auto & a : lf.learntExprs) m_smt_solver.assertExpr (a);
-
+        m_smt_solver.assertExpr (sf.getAllLemmas());
         m_smt_solver.assertExpr (mk<NEG>(candPrime));
 
         numOfSMTChecks++;
@@ -125,13 +125,20 @@ namespace ufo
         {
           modelsOfFailures[getModel(hr->srcVars)].insert(candSet[i]);
 
-          // GF: to debug (esp. nonlin opers):
-          LAdisj lcs;
-          if (lf.exprToLAdisj(candSet[i], lcs)) lf.assignPrioritiesForGarbage(lcs);
+          if (deferPriorities)
+          {
+            deferredBlocked.insert(candSet[i]);
+          }
+          else
+          {
+            // GF: to debug (esp. nonlin opers)
+            Sampl& s = sf.exprToSampl(candSet[i]);
+            sf.assignPrioritiesForBlocked();
+          }
 
           candSet.erase(candSet.begin() + i);
 
-          getIS(hr, candSet);
+          getIS(hr, candSet, deferPriorities);
           return;
         }
       }
@@ -143,7 +150,9 @@ namespace ufo
       Expr candPrime = cand;
 
       for (int j = 0; j < fc->dstVars.size(); j++)
-      candPrime = replaceAll(candPrime, lfs[0].back().getVarE(j), fc->dstVars[j]);
+      {
+        candPrime = replaceAll(candPrime, invarVars[0][j], fc->dstVars[j]);
+      }
 
       m_smt_solver.reset();
       m_smt_solver.assertExpr (fc->body);
@@ -153,9 +162,9 @@ namespace ufo
       return (!m_smt_solver.solve ());
     }
 
-    bool houdini (ExprSet& cands, bool skipInit=false, bool print=false)
+    bool houdini (ExprSet& cands, bool deferPriorities, bool skipInit)
     {
-      LAfactory& lf = lfs[0].back();
+      SamplFactory& sf = sfs[0].back();
       ExprVector exprs;
       for (auto & a : cands) exprs.push_back(a);
 
@@ -163,23 +172,32 @@ namespace ufo
       if (!skipInit)
       {
         for (auto a : fc)
+        {
           for (int i = exprs.size() - 1; i >= 0; i--)
           {
             if (!initCheckCand(a, exprs[i]))
             {
-              LAdisj lcs;
-              if (lf.exprToLAdisj(exprs[i], lcs)) lf.assignPrioritiesForFailed(lcs);
+              if (deferPriorities)
+              {
+                deferredFailed.insert(exprs[i]);
+              }
+              else
+              {
+                Sampl& s = sf.exprToSampl(exprs[i]);
+                if (!s.empty()) sf.assignPrioritiesForFailed();
+              }
               exprs.erase(exprs.begin()+i);
             }
           }
+        }
       }
 
       // consecution
-      for (auto a : tr) getIS(a, exprs);
+      for (auto a : tr) getIS(a, exprs, deferPriorities);
 
       // safety:
       int num = exprs.size();
-      int newLemmaAdded = redundancyCheck(exprs);
+      int newLemmaAdded = redundancyCheck(exprs, deferPriorities);
 
       if (newLemmaAdded == 0) return false;
 
@@ -188,11 +206,32 @@ namespace ufo
       return true;
     }
 
+    void prioritiesDeferred()
+    {
+      SamplFactory& sf = sfs[0].back();
+
+      for (auto & a : deferredLearned)
+      {
+        Sampl& s = sf.exprToSampl(a);
+        sf.assignPrioritiesForLearned();
+      }
+      for (auto & a : deferredFailed)
+      {
+        Sampl& s = sf.exprToSampl(a);
+        sf.assignPrioritiesForFailed();
+      }
+      for (auto & a : deferredBlocked)
+      {
+        Sampl& s = sf.exprToSampl(a);
+        sf.assignPrioritiesForBlocked();
+      }
+    }
+
     bool synthesize(int maxAttempts, int batchSz, int scndChSz)
     {
-      assert(lfs.size() == 1); // current limitation
+      assert(sfs.size() == 1); // current limitation
 
-      LAfactory& lf = lfs[0].back();
+      SamplFactory& sf = sfs[0].back();
 
       ExprVector candsBatch;
 
@@ -205,20 +244,22 @@ namespace ufo
       {
         candsBatch.clear();
 
+        if (printLog) outs() << "\n  ---- new iteration " << iter <<  " ----\n";
+
         while (candsBatch.size() < batchSz)
         {
-          Expr cand = lf.getFreshCandidate();
+          Expr cand = sf.getFreshCandidate();
           if (cand == NULL) continue;
 
           if (isTautology(cand))  // keep searching
           {
-            lf.assignPrioritiesForLearnt(lf.samples.back());
+            sf.assignPrioritiesForLearned();
             continue;
           }
 
-          if (lf.nonlinVars.size() > 0 && !u.isSat(cand))  // keep searching
+          if (sf.lf.nonlinVars.size() > 0 && !u.isSat(cand))  // keep searching
           {
-            lf.assignPrioritiesForFailed(lf.samples.back());
+            sf.assignPrioritiesForFailed();
             continue;
           }
 
@@ -226,19 +267,23 @@ namespace ufo
 
           bool toskip = false;
           for (auto a : fc)
+          {
             if (!initCheckCand(a, cand))
             {
               numFailInit++;
-              lf.assignPrioritiesForFailed(lf.samples.back());
+              sf.assignPrioritiesForFailed();
               toskip = true;
               break;
             }
+          }
           if (toskip) continue;
+
+          if (printLog) outs () << "   candidate for " << *decls[0] << ": " << *cand << "\n";
 
           candsBatch.push_back(cand);
         }
 
-        for (auto a : tr) getIS(a, candsBatch);      // houdini
+        for (auto a : tr) getIS(a, candsBatch, false);      // houdini
 
         if (candsBatch.size() == 0) continue;
 
@@ -247,7 +292,7 @@ namespace ufo
         if (success) break;
 
         // second chance candidates
-        triggerSecondChance += redundancyCheck(candsBatch);
+        triggerSecondChance += redundancyCheck(candsBatch, false);
         if (triggerSecondChance < scndChSz) continue;
 
         triggerSecondChance = 0;
@@ -257,7 +302,7 @@ namespace ufo
         {
           m_smt_solver.reset();
           m_smt_solver.assertExpr (it->first);
-          for (auto & a : lfs[0].back().learntExprs) m_smt_solver.assertExpr (a);
+          m_smt_solver.assertExpr (sf.getAllLemmas());
 
           numOfSMTChecks++;
           if (!m_smt_solver.solve ()) // CE violated
@@ -268,7 +313,7 @@ namespace ufo
           else ++it;
         }
 
-        if (secondChanceCands.size() > 0) success = houdini(secondChanceCands, true, true);
+        if (secondChanceCands.size() > 0) success = houdini(secondChanceCands, false, true);
         if (success) break;
       }
 
@@ -302,20 +347,21 @@ namespace ufo
 
     if (itp > 0) ds.bootstrapBoundedProofs(itp, cands);
 
-    for (auto& dcl: ruleManager.decls) ds.doCodeSampling (dcl->arg(0), cands);
+    for (auto& dcl: ruleManager.decls) ds.doSeedMining (dcl->arg(0), cands);
 
-    bool success = ds.houdini(cands);
-    outs () << "Number of bootstrapped lemmas: " << ds.getLearntLemmas(0).size() << "\n";
+    bool success = ds.houdini(cands, true, false);
+    outs () << "Number of bootstrapped lemmas: " << ds.getlearnedLemmas(0).size() << "\n";
     if (success)
     {
       outs () << "Success after the bootstrapping\n";
     }
     else
     {
-      for (auto& dcl: ruleManager.decls) ds.calculateStatistics(dcl->arg(0));
+      ds.calculateStatistics();
+      ds.prioritiesDeferred();
 
       success = ds.synthesize(maxAttempts, batch, retry);
-      if (success) outs () << "Total number of learned lemmas: " << ds.getLearntLemmas(0).size() << "\n";
+      if (success) outs () << "Total number of learned lemmas: " << ds.getlearnedLemmas(0).size() << "\n";
 
       if (success) outs () << "\nSuccess after the sampling\n";
       else         outs () << "\nNo success after " << maxAttempts << " iterations\n";
@@ -324,7 +370,7 @@ namespace ufo
     if (success && outfile != NULL)
     {
       vector<ExprSet> invs;
-      invs.push_back(ds.getLearntLemmas(0));
+      invs.push_back(ds.getlearnedLemmas(0));
       ds.serializeInvariants(invs, outfile);
     }
   }

@@ -1141,6 +1141,18 @@ namespace ufo
     return conjoin (newer, exp->getFactory());
   }
 
+  inline static Expr cloneVar(Expr var, Expr new_name) // ... and give a new_name to the clone
+  {
+    if (bind::isIntConst(var))
+      return bind::intConst(new_name);
+    else if (bind::isRealConst(var))
+      return bind::realConst(new_name);
+    else if (bind::isBoolConst(var))
+      return bind::boolConst(new_name);
+
+    else return NULL;
+  }
+
   // not very pretty method, but..
   inline static Expr reBuildCmp(Expr term, Expr lhs, Expr rhs)
   {
@@ -1443,6 +1455,30 @@ namespace ufo
   inline static Expr moveInsideITE (Expr exp)
   {
     RW<MoveInsideITEr> a(new MoveInsideITEr());
+    return dagVisit (a, exp);
+  }
+
+  struct NegAndRewriter
+  {
+    NegAndRewriter () {};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<NEG>(exp) && isOpX<AND>(exp->arg(0)))
+      {
+        ExprSet cnjs;
+        getConj(exp->arg(0), cnjs);
+        ExprSet neggedCnjs;
+        for (auto & c : cnjs) neggedCnjs.insert(mkNeg(c));
+        return disjoin(neggedCnjs, exp->getFactory());
+      }
+      return exp;
+    }
+  };
+
+  inline static Expr rewriteNegAnd (Expr exp)
+  {
+    RW<NegAndRewriter> a(new NegAndRewriter());
     return dagVisit (a, exp);
   }
 
@@ -1781,6 +1817,28 @@ namespace ufo
     }
   };
 
+  struct BoolEqRewriter
+  {
+    BoolEqRewriter () {};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<EQ>(exp))
+      {
+        Expr lhs = exp->left();
+        Expr rhs = exp->right();
+        if (bind::isBoolConst(lhs) || bind::isBoolConst(rhs) ||
+            isOpX<NEG>(lhs) || isOpX<NEG>(rhs))
+        {
+          return mk<AND>(mk<OR>(mkNeg(lhs), rhs),
+                         mk<OR>(lhs, mkNeg(rhs)));
+        }
+        return exp;
+      }
+      return exp;
+    }
+  };
+
   struct CondRetriever : public std::unary_function<Expr, VisitAction>
   {
     ExprSet& conds;
@@ -1848,6 +1906,12 @@ namespace ufo
       return VisitAction::doKids ();
     }
   };
+
+  inline Expr rewriteBoolEq (Expr exp)
+  {
+    RW<BoolEqRewriter> tr(new BoolEqRewriter());
+    return dagVisit (tr, exp);
+  }
 
   inline void retrieveDeltas (Expr exp, ExprVector& srcVars, ExprVector& dstVars, ExprSet& deltas)
   {

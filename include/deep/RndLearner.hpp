@@ -2,11 +2,11 @@
 #define RNDLEARNER__HPP__
 
 #include "Horn.hpp"
-#include "CodeSampler.hpp"
-#include "Distribution.hpp"
-#include "LinCom.hpp"
 #include "BndExpl.hpp"
 #include "ae/SMTUtils.hpp"
+#include "sampl/SeedMiner.hpp"
+#include "sampl/Sampl.hpp"
+
 #include <iostream>
 #include <fstream>
 
@@ -27,9 +27,11 @@ namespace ufo
 
     CHCs& ruleManager;
     vector<Expr> decls;
-    vector<vector<LAfactory>> lfs;
-    vector<LAdisj> lcss;
+    vector<vector<SamplFactory>> sfs;
     vector<Expr> curCandidates;
+
+    vector<map<int, Expr>> invarVars;
+
     int invNumber;
     int numOfSMTChecks;
 
@@ -63,9 +65,12 @@ namespace ufo
       {
         ExprSet avars;
         expr::filter (a, bind::IsConst(), std::inserter (avars, avars.begin ()));
+        if (avars.size() == 0) continue;
         varComb[avars].insert(mkNeg(a));
       }
-      
+
+      if (varComb.size() == 0) return false;
+
       m_smt_solver.reset();
       
       bool res = false;
@@ -101,31 +106,30 @@ namespace ufo
         if (!isOpX<TRUE>(hr.srcRelation))
         {
           ind1 = getVarIndex(hr.srcRelation, decls);
-          LAfactory& lf1 = lfs[ind1].back();
+          SamplFactory& sf1 = sfs[ind1].back();
 
           cand1 = curCandidates[ind1];
 
-          for (int i = 0; i < hr.srcVars.size(); i++)
+          for (auto & v : invarVars[ind1])
           {
-            cand1 = replaceAll(cand1, lf1.getVarE(i), hr.srcVars[i]);
+            cand1 = replaceAll(cand1, v.second, hr.srcVars[v.first]);
           }
           m_smt_solver.assertExpr(cand1);
 
-          lmApp = conjoin(lf1.learntExprs, m_efac);
-          for (int i = 0; i < hr.srcVars.size(); i++)
+          lmApp = sf1.getAllLemmas();
+          for (auto & v : invarVars[ind1])
           {
-            lmApp = replaceAll(lmApp, lf1.getVarE(i), hr.srcVars[i]);
+            lmApp = replaceAll(lmApp, v.second, hr.srcVars[v.first]);
           }
           m_smt_solver.assertExpr(lmApp);
         }
         
         // pushing dst relation
         cand2 = curCandidates[ind2];
-        LAfactory& lf2 = lfs[ind2].back();
-    
-        for (int i = 0; i < hr.dstVars.size(); i++)
+
+        for (auto & v : invarVars[ind2])
         {
-          cand2 = replaceAll(cand2, lf2.getVarE(i), hr.dstVars[i]);
+          cand2 = replaceAll(cand2, v.second, hr.dstVars[v.first]);
         }
         
         m_smt_solver.assertExpr(mk<NEG>(cand2));
@@ -148,9 +152,9 @@ namespace ufo
     {
       for (int i = 0; i < invNumber; i++)
       {
-        LAfactory& lf = lfs[i].back();
-        if (isOpX<TRUE>(curCandidates[i])) lf.assignPrioritiesForFailed(lf.samples.back());
-        else lf.assignPrioritiesForLearnt(lf.samples.back());
+        SamplFactory& sf = sfs[i].back();
+        if (isOpX<TRUE>(curCandidates[i])) sf.assignPrioritiesForFailed();
+        else sf.assignPrioritiesForLearned();
       }
     }
 
@@ -159,7 +163,7 @@ namespace ufo
       for (int i = 0; i < invNumber; i++)
       {
         Expr cand = curCandidates[i];
-        LAfactory& lf = lfs[i].back();
+        SamplFactory& sf = sfs[i].back();
         if (isOpX<TRUE>(cand))
         {
           if (printLog) outs () << "    => bad candidate for " << *decls[i] << "\n";
@@ -170,41 +174,36 @@ namespace ufo
 
           if (doRedundancyOptim)
           {
-            Expr allLemmas = conjoin(lf.learntExprs, m_efac);
+            Expr allLemmas = sf.getAllLemmas();
             if (u.isImplies(allLemmas, cand))
             {
               curCandidates[i] = mk<TRUE>(m_efac);
             }
             else
             {
-              lf.learntLemmas.push_back(lf.samples.size() - 1);
-              lf.learntExprs.insert(cand);
+              sf.learnedExprs.insert(cand);
             }
           }
         }
       }
     }
 
-    void resetLearntLemmas()
+    void resetlearnedLemmas()
     {
-      for (auto & lf : lfs)
-      {
-        lf.back().learntExprs.clear();
-        lf.back().learntLemmas.clear();
-      }
+      for (auto & sf : sfs) sf.back().learnedExprs.clear();
     }
 
     bool checkWithKInduction()
     {
       if (ruleManager.chcs.size() != 3) return false; // current limitation
-      if (lfs.size() != 1) return false;              // current limitation
+      if (sfs.size() != 1) return false;              // current limitation
       if (kind_succeeded) return false;
 
       Expr cand = curCandidates[0];
       if (isOpX<TRUE>(cand)) return false;
 
-      LAfactory& lf = lfs[0].back();
-      Expr allLemmas = conjoin(lf.learntExprs, m_efac);
+      SamplFactory& sf = sfs[0].back();
+      Expr allLemmas = sf.getAllLemmas();
 
       // get lemmas to be included to inductive rule
       for (int i = 0; i < ruleManager.chcs.size(); i++)
@@ -212,9 +211,9 @@ namespace ufo
         auto & hr = ruleManager.chcs[i];
         if (!hr.isInductive) continue;
 
-        for (int i = 0; i < hr.srcVars.size(); i++)
+        for (auto & v : invarVars[0])
         {
-          allLemmas = replaceAll(allLemmas, lf.getVarE(i), hr.srcVars[i]);
+          allLemmas = replaceAll(allLemmas, v.second, hr.srcVars[v.first]);
         }
       }
 
@@ -234,9 +233,9 @@ namespace ufo
         oneInductiveProof = (i == 2);
         if (oneInductiveProof) // can complete the invariant only when the proof is 1-inductive
         {
-          curCandidates[0] = bnd.getInv(lf.getVars());
+          curCandidates[0] = bnd.getInv();
           bool addedRemainingLemma = checkCandidates() && checkSafety();
-          if (addedRemainingLemma) lf.learntExprs.insert(curCandidates[0]); // for serialization only
+          if (addedRemainingLemma) sf.learnedExprs.insert(curCandidates[0]); // for serialization only
 
           if (printLog) outs () << "remaining lemma(s): " << *curCandidates[0] <<
                  "\nsanity check: " << addedRemainingLemma << "\n";
@@ -329,11 +328,9 @@ namespace ufo
         Expr invApp = curCandidates[ind];
         if (safety_progress[num-1] == true) continue;
 
-        LAfactory& lf = lfs[ind].back();
-
-        for (int i = 0; i < hr.srcVars.size(); i++)
+        for (auto & v : invarVars[ind])
         {
-          invApp = replaceAll(invApp, lf.getVarE(i), hr.srcVars[i]);
+          invApp = replaceAll(invApp, v.second, hr.srcVars[v.first]);
         }
 
         m_smt_safety_solvers[num-1].assertExpr(invApp);
@@ -388,19 +385,20 @@ namespace ufo
       for (int ind = 0; ind < invNumber; ind++)
       {
         Expr cand = curCandidates[ind];
-        LAfactory& lf = lfs[ind].back();
+        SamplFactory& sf = sfs[ind].back();
         if (!isOpX<TRUE>(cand))
         {
           for (auto &hr : ruleManager.chcs)
           {
-            if ( hr.srcRelation == decls[ind] &&
+            if (hr.srcRelation == decls[ind] &&
                 hr.dstRelation != decls[ind] &&
                 !hr.isQuery)
             {
               Expr lemma2add = curCandidates[ind];
-              for (int i = 0; i < hr.srcVars.size(); i++)
+
+              for (auto & v : invarVars[ind])
               {
-                lemma2add = replaceAll(lemma2add, lf.getVarE(i), hr.srcVars[i]);
+                lemma2add = replaceAll(lemma2add, v.second, hr.srcVars[v.first]);
               }
 
               numOfSMTChecks++;
@@ -416,28 +414,24 @@ namespace ufo
 
       for(auto ind : rels2update)
       {
-        vector<LAfactory>& lf = lfs[ind];
-        lf.push_back(LAfactory (m_efac, aggressivepruning));
-        LAfactory& lf_before = lf[lf.size()-2];
-        LAfactory& lf_after = lf.back();
+        vector<SamplFactory>& sf = sfs[ind];
+        sf.push_back(SamplFactory (m_efac, aggressivepruning));
 
-        for (auto & var : ruleManager.invVars[decls[ind]]) lf_after.addVar(var);
-        lf_after.nonlinVars = lf_before.nonlinVars;
+        SamplFactory& sf_before = sf[sf.size()-2];
+        SamplFactory& sf_after = sf.back();
+
+        for (auto & var : invarVars[ind]) sf_after.addVar(var.second);
+        sf_after.lf.nonlinVars = sf_before.lf.nonlinVars;
 
         ExprSet stub;
-        doCodeSampling(decls[ind], stub);
-        calculateStatistics(decls[ind]);
+        doSeedMining(decls[ind], stub);
 
-        for (auto a : lf_before.learntExprs)
+        sf_after.calculateStatistics(densecode, addepsilon);
+        for (auto a : sf_before.learnedExprs)
         {
-          lf_after.learntExprs.insert(a);
-          lf_after.samples.push_back(LAdisj());
-          LAdisj& lcs = lf_after.samples.back();
-          if (lf_after.exprToLAdisj(a, lcs))
-          {
-            lf_after.assignPrioritiesForLearnt(lcs);
-            lf_after.learntLemmas.push_back (lf_after.samples.size() - 1);
-          }
+          sf_after.learnedExprs.insert(a);
+          sf_after.exprToSampl(a);
+          sf_after.assignPrioritiesForLearned();
         }
       }
     }
@@ -446,37 +440,46 @@ namespace ufo
     {
       assert (invDecl->arity() > 2);
       assert(decls.size() == invNumber);
-      assert(lfs.size() == invNumber);
+      assert(sfs.size() == invNumber);
       assert(curCandidates.size() == invNumber);
       
       decls.push_back(invDecl->arg(0));
+      invarVars.push_back(map<int, Expr>());
+
       curCandidates.push_back(NULL);
-      
-      lfs.push_back(vector<LAfactory> ());
-      lfs.back().push_back(LAfactory (m_efac, aggressivepruning));
-      LAfactory& lf = lfs.back().back();
-      
+
+      sfs.push_back(vector<SamplFactory> ());
+      sfs.back().push_back(SamplFactory (m_efac, aggressivepruning));
+      SamplFactory& sf = sfs.back().back();
+
+      for (int i = 0; i < ruleManager.invVars[decls.back()].size(); i++)
+      {
+        Expr var = ruleManager.invVars[decls.back()][i];
+        if (sf.addVar(var)) invarVars[invNumber][i] = var;
+      }
+
       invNumber++;
-      
-      for (auto & var : ruleManager.invVars[decls.back()]) lf.addVar(var);
     }
 
-    void doCodeSampling(Expr invRel, ExprSet& cands)
+    void doSeedMining(Expr invRel, ExprSet& cands)
     {
-      vector<CodeSampler> css;
+      vector<SeedMiner> css;
       set<int> progConstsTmp;
       set<int> progConsts;
       set<int> intCoefs;
       
       int ind = getVarIndex(invRel, decls);
-      LAfactory& lf = lfs[ind].back();
+      SamplFactory& sf = sfs[ind].back();
+
+      // init boolean combinations quickly
+      sf.bf.initialize();
 
       // analize each rule separately:
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
 
-        css.push_back(CodeSampler(hr, invRel, lf.getVars(), lf.nonlinVars));
+        css.push_back(SeedMiner(hr, invRel, invarVars[ind], sf.lf.nonlinVars));
         css.back().analyzeCode();
 
         if (hr.isInductive) css.back().analyzeExtras(cands);
@@ -492,20 +495,22 @@ namespace ufo
         for (auto &a : css.back().intCoefs) intCoefs.insert(a);
       }
 
-      if (lf.nonlinVars.size() > 0)
+      cands.clear();
+
+      if (sf.lf.nonlinVars.size() > 0)
       {
         if (printLog) outs() << "Multed vars: ";
-        for (auto &a : lf.nonlinVars)
+        for (auto &a : sf.lf.nonlinVars)
         {
           if (printLog) outs() << *a.first << " = " << *a.second << "\n";
-          lf.addVar(a.second);
+          sf.lf.addVar(a.second);
           Expr b = a.first->right();
           if (isNumericConst(b)) intCoefs.insert(lexical_cast<int>(b));
         }
       }
 
       for (auto &a : intCoefs) intCoefs.insert(-a);
-      for (auto &a : intCoefs) if (a != 0) lf.addIntCoef(a);
+      for (auto &a : intCoefs) if (a != 0) sf.lf.addIntCoef(a);
 
       for (auto &a : intCoefs)
       {
@@ -527,10 +532,10 @@ namespace ufo
           }
         }
         progConsts.erase(min);
-        lf.addConst(min);
+        sf.lf.addConst(min);
       }
 
-      lf.initialize();
+      sf.lf.initialize();
 
       ExprSet allCands;
       for (auto &cs : css)
@@ -544,136 +549,25 @@ namespace ufo
       // normalize samples obtained from CHCs
       for (auto & cand : allCands)
       {
-        lcss.push_back(LAdisj());
-        LAdisj& lcs = lcss.back();
-        if (lf.exprToLAdisj(cand, lcs))
+        Sampl& s = sf.exprToSampl(cand);
+        if (s.arity() > 0)
         {
-          lcs.normalizePlus();
-          cands.insert(lf.toExpr(lcs));   // do it here because cand may contain artif. vars
-        }
-        else
-        {
-          lcss.pop_back();
+          cands.insert(sf.sampleToExpr(s));
         }
       }
     }
 
-    void calculateStatistics(Expr invRel)
+    void calculateStatistics()
     {
-      int ind = getVarIndex(invRel, decls);
-      LAfactory& lf = lfs[ind].back();
-
-      set<int> orArities;
-
-      for (auto &lcs : lcss)
+      for (int i = 0; i < invNumber; i++)
       {
-        orArities.insert(lcs.arity);
-      }
+        sfs[i].back().calculateStatistics(densecode, addepsilon);
 
-      if (orArities.size() == 0)                // default, if no samples were obtained from the code
-      {
-        for (int i = 1; i <= DEFAULTARITY; i++) orArities.insert(i);
-      }
-      
-      lf.initDensities(orArities);
-      if (densecode)
-      {
-        // collect number of occurrences....
-
-        for (auto &lcs : lcss)
+        if (printLog)
         {
-          int ar = lcs.arity;
-
-          // of arities of application of OR
-          lf.orAritiesDensity[ar] ++;
-
-          for (auto & lc : lcs.dstate)
-          {
-            // of arities of application of PLUS
-            lf.plusAritiesDensity[ar][lc.arity] ++;
-
-            // of constants
-            lf.intConstDensity[ar][lc.intconst] ++;
-
-            // of comparison operations
-            lf.cmpOpDensity[ar][lc.cmpop] ++;
-
-            set<int> vars;
-            int vars_id = -1;
-            for (int j = 0; j < lc.vcs.size(); j = j+2) vars.insert(lc.vcs[j]);
-            for (int j = 0; j < lf.varCombinations[lc.arity].size(); j++)
-            {
-              if (lf.varCombinations[lc.arity][j] == vars)
-              {
-                vars_id = j;
-                break;
-              }
-            }
-            assert(vars_id >= 0);
-
-            // of variable combinations
-            lf.varDensity[ar][lc.arity][vars_id] ++;
-
-            // of variable coefficients
-            for (int j = 1; j < lc.vcs.size(); j = j+2)
-            {
-              lf.coefDensity[ ar ][ lc.vcs [j-1] ] [lc.vcs [j] ] ++;
-            }
-          }
+          outs() << "\nStatistics for " << *decls[i] << "\n";
+          sfs[i].back().printStatistics();
         }
-      }
-      else
-      {
-        // same thing as in above; but instead of precise frequencies, we gather a rough presence
-        for (auto &lcs : lcss)
-        {
-          int ar = lcs.arity;
-
-          // of arities of application of OR
-          lf.orAritiesDensity[ar] = 1;
-
-          for (auto & lc : lcs.dstate)
-          {
-            // of arities of application of PLUS
-            lf.plusAritiesDensity[ar][lc.arity] = 1;
-
-            // of constants
-            lf.intConstDensity[ar][lc.intconst] = 1;
-
-            // of comparison operations
-            lf.cmpOpDensity[ar][lc.cmpop] = 1;
-
-            set<int> vars;
-            int vars_id = -1;
-            for (int j = 0; j < lc.vcs.size(); j = j+2) vars.insert(lc.vcs[j]);
-            for (int j = 0; j < lf.varCombinations[lc.arity].size(); j++)
-            {
-              if (lf.varCombinations[lc.arity][j] == vars)
-              {
-                vars_id = j;
-                break;
-              }
-            }
-            assert(vars_id >= 0);
-
-            // of variable combinations
-            lf.varDensity[ar][lc.arity][vars_id] = 1;
-
-            // of variable coefficients
-            for (int j = 1; j < lc.vcs.size(); j = j+2)
-            {
-              lf.coefDensity[ ar ][ lc.vcs [j-1] ] [lc.vcs [j] ] = 1;
-            }
-          }
-        }
-      }
-
-      lf.stabilizeDensities(orArities, addepsilon, densecode);
-
-      if (printLog)
-      {
-        outs() << "\nStatistics for " << *invRel << ":\n";
-        lf.printCodeStatistics(orArities);
       }
     }
 
@@ -690,8 +584,8 @@ namespace ufo
         for (int j = 0; j < invNumber; j++)
         {
           if (curCandidates[j] != NULL) continue;   // if the current candidate is good enough
-          LAfactory& lf = lfs[j].back();
-          Expr cand = lf.getFreshCandidate();
+          SamplFactory& sf = sfs[j].back();
+          Expr cand = sf.getFreshCandidate();
           if (cand == NULL)
           {
             skip = true;
@@ -700,14 +594,14 @@ namespace ufo
 
           if (isTautology(cand))  // keep searching
           {
-            lf.assignPrioritiesForLearnt(lf.samples.back());
+            sf.assignPrioritiesForLearned();
             skip = true;
             break;
           }
 
-          if (lf.nonlinVars.size() > 0 && !u.isSat(cand))  // keep searching
+          if (sf.lf.nonlinVars.size() > 0 && !u.isSat(cand))  // keep searching
           {
-            lf.assignPrioritiesForFailed(lf.samples.back());
+            sf.assignPrioritiesForFailed();
             skip = true;
             break;
           }
@@ -753,14 +647,14 @@ namespace ufo
       
       for (int j = 0; j < invNumber; j++)
         outs () << "        number of sampled lemmas for " << *decls[j] << ": "
-          << lfs[j].back().learntExprs.size() << "\n";
+          << sfs[j].back().learnedExprs.size() << "\n";
 
       outs () << "        number of SMT checks: " << numOfSMTChecks << "\n";
 
       if (success && outfile != NULL)
       {
         vector<ExprSet> invs;
-        for (auto & lf : lfs) invs.push_back(lf.back().learntExprs);
+        for (auto & sf : sfs) invs.push_back(sf.back().learnedExprs);
         serializeInvariants(invs, outfile);
       }
     }
@@ -769,7 +663,7 @@ namespace ufo
     {
       numTries++;
       resetSafetySolver();
-      resetLearntLemmas();
+      resetlearnedLemmas();
       for (int i = 0; i < invNumber; i++) curCandidates[i] = conjoin(lms[i], m_efac);
 
       if (checkCandidates() && checkSafety())
@@ -818,9 +712,10 @@ namespace ufo
     for (auto& dcl: ruleManager.decls)
     {
       ds.initializeDecl(dcl);
-      ds.doCodeSampling(dcl->arg(0), stub);
-      ds.calculateStatistics(dcl->arg(0));
+      ds.doSeedMining(dcl->arg(0), stub);
     }
+
+    ds.calculateStatistics();
 
     ds.synthesize(maxAttempts, outfile, itpCands);
   };

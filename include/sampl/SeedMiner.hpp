@@ -1,5 +1,5 @@
-#ifndef CODESAMPLER__HPP__
-#define CODESAMPLER__HPP__
+#ifndef SEEDMINER__HPP__
+#define SEEDMINER__HPP__
 
 #include "ae/AeValSolver.hpp"
 #include "ae/ExprSimpl.hpp"
@@ -9,7 +9,7 @@ using namespace boost;
 
 namespace ufo
 {
-  class CodeSampler
+  class SeedMiner
   {
     public:
 
@@ -20,15 +20,15 @@ namespace ufo
 
     HornRuleExt& hr;
     Expr invRel;
-    ExprVector invVars;
+    map<int, Expr>& invVars;
     ExprMap& extraVars;
 
     ExprFactory &m_efac;
 
-    CodeSampler(HornRuleExt& r, Expr& d, ExprVector& v, ExprMap& e) :
+    SeedMiner(HornRuleExt& r, Expr& d, map<int, Expr>& v, ExprMap& e) :
       hr(r), invRel(d), invVars(v), extraVars(e), m_efac(d->getFactory()) {};
 
-    void addSampleHlp(Expr tmpl, ExprVector& vars, ExprSet& actualVars)
+    void addSeedHlp(Expr tmpl, ExprVector& vars, ExprSet& actualVars)
     {
       ExprSet dsjs;
       ExprSet newDsjs;
@@ -49,10 +49,12 @@ namespace ufo
 
       if (newDsjs.size() == 0) return;
 
-      tmpl = disjoin (newDsjs, m_efac);
-      tmpl = findNonlinAndRewrite(tmpl, vars, invVars, extraVars);
+      ExprVector invVarsCstm;
+      for (auto & a : invVars) invVarsCstm.push_back(a.second);
 
-      ExprVector invVarsCstm = invVars;
+      tmpl = disjoin (newDsjs, m_efac);
+      tmpl = findNonlinAndRewrite(tmpl, vars, invVarsCstm, extraVars);
+
       for (auto &v : actualVars)
       {
         int index = getVarIndex(v, vars);
@@ -82,10 +84,9 @@ namespace ufo
       } catch (const boost::bad_lexical_cast& e) { /*TBD*/ }
     }
 
-    void addSample(Expr term)
+    void addSeed(Expr term)
     {
       ExprSet actualVars;
-      ExprSet subsetInvVars;
       
       expr::filter (term, bind::IsConst(), std::inserter (actualVars, actualVars.begin ()));
       
@@ -94,67 +95,76 @@ namespace ufo
       bool locals = false;
       if (actualVars.size() == 0 || isTautology(term)) return;
             
-      // split each term to two samples (for srcVars and dstVars)
+      // split each term to two seeds (for srcVars and dstVars)
 
       if (hr.srcRelation == invRel)
       {
-        addSampleHlp(term, hr.srcVars, actualVars);
+        addSeedHlp(term, hr.srcVars, actualVars);
       }
       
       if (hr.dstRelation == invRel)
       {
-        addSampleHlp(term, hr.dstVars, actualVars);
+        addSeedHlp(term, hr.dstVars, actualVars);
       }
     }
     
-    void populateArityAndTemplates(Expr term)
+    void obtainSeeds(Expr term)
     {
-      if (isOpX<NEG>(term))
+      if (bind::isBoolConst(term))
       {
-        addSample(mkNeg(term->last()));             // massage the negated formula a bit
-        populateArityAndTemplates(term->last());
+        addSeed(term);
+      }
+      else if (isOpX<NEG>(term))
+      {
+        Expr negged = term->last();
+        if (bind::isBoolConst(negged))
+          addSeed(term);
+        else
+          obtainSeeds(negged);
       }
       else if (isOpX<OR>(term))
       {
         if (containsOp<AND>(term))
         {
           Expr term2 = convertToGEandGT(rewriteOrAnd(term));
-          populateArityAndTemplates(term2);
+          obtainSeeds(term2);
         }
         else
         {
           Expr term2 = convertToGEandGT(simplifyArithmDisjunctions(term));
-          addSample(term2);        // add any disjunct as a sample;
+          addSeed(term2);        // add any disjunct as a seed;
         }
       }
       else if (isOpX<AND>(term))
       {
         for (int i = 0; i < term->arity(); i++)
         {
-          populateArityAndTemplates(term->arg(i));
+          obtainSeeds(term->arg(i));
         }
       }
       else if (isOpX<IMPL>(term))
       {
         Expr term2 = mk<OR>(mkNeg(term->left()), term->right());
-        populateArityAndTemplates(term2);
+        obtainSeeds(term2);
       }
       else if (isOpX<GT>(term) || isOpX<GEQ>(term))
       {
-        addSample(term);      // get rid of ITEs first
+        addSeed(term);      // get rid of ITEs first
       }
       else if (isOp<ComparissonOp>(term))
       {
-        populateArityAndTemplates(convertToGEandGT(term));
+        obtainSeeds(convertToGEandGT(term));
       }
     }
 
     void coreProcess(Expr e)
     {
+      e = rewriteBoolEq(e);
       e = moveInsideITE(e);
       e = unfoldITE(e);
       e = convertToGEandGT(e);
-      populateArityAndTemplates(e);
+      e = rewriteNegAnd(e);
+      obtainSeeds(e);
     }
 
     void analyzeExtras(ExprSet& extra)
@@ -168,10 +178,10 @@ namespace ufo
       {
         outs() << "\nAnalize CHC:\n";
         outs() << "src vars: ";
-        for (int i = 0; i < hr.srcVars.size(); i++) outs() << "[" << *invVars[i] << "] = " << *hr.srcVars[i] << ", ";
+        for (int i = 0; i < hr.srcVars.size(); i++) outs() << *hr.srcVars[i] << ", ";
         outs() << "\n";
         outs() << "dst vars: ";
-        for (int i = 0; i < hr.dstVars.size(); i++) outs() << "[" << *invVars[i] << "] = " << *hr.dstVars[i] << ", ";
+        for (int i = 0; i < hr.dstVars.size(); i++) outs() << *hr.dstVars[i] << ", ";
         outs() << "\n";
         outs() << "local vars: ";
         for (auto & a : hr.locVars) outs() << *a << ", ";
@@ -187,20 +197,31 @@ namespace ufo
       if (hr.srcRelation != invRel) for (auto &v : hr.srcVars) quantified.insert(v);
       if (hr.dstRelation != invRel) for (auto &v : hr.dstVars) quantified.insert(v);
 
+      if (hr.srcRelation == invRel)
+        for (int i = 0; i < hr.srcVars.size(); i++)
+          if (invVars[i] == NULL) quantified.insert(hr.srcVars[i]);
+
+      if (hr.dstRelation == invRel)
+        for (int i = 0; i < hr.dstVars.size(); i++)
+          if (invVars[i] == NULL) quantified.insert(hr.dstVars[i]);
+
       if (quantified.size() > 0)
       {
         AeValSolver ae(mk<TRUE>(m_efac), hr.body, quantified);
         if (ae.solve())
         {
           Expr bodyTmp = ae.getValidSubset();
-          if (bodyTmp != NULL) body = bodyTmp;
+          if (bodyTmp != NULL)
+          {
+            body = bodyTmp;
+          }
         }
       }
 
-      // get samples and normalize
+      // get seeds and normalize
       ExprSet conds;
       retrieveConds(body, conds);
-      for (auto & a : conds) populateArityAndTemplates(a);
+      for (auto & a : conds) obtainSeeds(a);
 
       // for the query: add a negation of the entire non-recursive part:
       if (hr.isQuery)
@@ -221,14 +242,16 @@ namespace ufo
         retrieveDeltas(e, hr.srcVars, hr.dstVars, deltas);
         for (auto & a : deltas)
         {
-          populateArityAndTemplates(a);
+          obtainSeeds(a);
         }
 
         e = overapproxTransitions(e, hr.srcVars, hr.dstVars);
 
         e = simplifyBool(e);
+        e = rewriteBoolEq(e);
         e = convertToGEandGT(e);
-        populateArityAndTemplates(e);
+        e = rewriteNegAnd(e);
+        obtainSeeds(e);
       }
     }
   };

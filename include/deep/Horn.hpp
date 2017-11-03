@@ -15,6 +15,16 @@ namespace ufo
       body = mk<AND>(body, mk<EQ>(v1, v2));
       return true;
     }
+    else if (isOpX<TRUE>(v1))
+    {
+      body = mk<AND>(body, v2);
+      return true;
+    }
+    else if (isOpX<FALSE>(v1))
+    {
+      body = mk<AND>(body, mk<NEG>(v2));
+      return true;
+    }
     //else.. TODO: simplifications like "1 + 2" and support for other sorts like Reals and Bools
     return false;
   }
@@ -64,7 +74,7 @@ namespace ufo
       {
         // primed copy of var:
         Expr new_name = mkTerm<string> (lexical_cast<string>(invVarsDst[i]) + "__", body->getFactory());
-        Expr var = bind::intConst(new_name);
+        Expr var = cloneVar(invVarsDst[i], new_name);
         dstVars.push_back(var);
 
         // find constants
@@ -109,6 +119,10 @@ namespace ufo
       }
       else
       {
+        if (bind::isBoolConst(term))
+        {
+          lin.push_back(term);
+        }
         if (isOpX<FAPP>(term))
         {
           if (term->arity() > 0)
@@ -157,7 +171,14 @@ namespace ufo
           for (int i = 1; i < a->arity()-1; i++)
           {
             Expr new_name = mkTerm<string> ("__v__" + to_string(i - 1), m_efac);
-            Expr var = bind::intConst(new_name);
+            Expr var;
+            if (isOpX<INT_TY> (a->arg(i)))
+              var = bind::intConst(new_name);
+            else if (isOpX<REAL_TY> (a->arg(i)))
+              var = bind::realConst(new_name);
+            else if (isOpX<BOOL_TY> (a->arg(i)))
+              var = bind::boolConst(new_name);
+
             invVars[a->arg(0)].push_back(var);
           }
         }
@@ -207,9 +228,9 @@ namespace ufo
         hr.head = head->arg(0);
         hr.dstRelation = head->arg(0)->arg(0);
 
-        ExprVector origSrcVars;
+        ExprVector origSrcSymbs;
         ExprVector lin;
-        preprocess(body, origSrcVars, fp.m_rels, hr.srcRelation, lin);
+        preprocess(body, origSrcSymbs, fp.m_rels, hr.srcRelation, lin);
 
         hr.isFact = isOpX<TRUE>(hr.srcRelation);
         hr.isQuery = (hr.dstRelation == failDecl);
@@ -217,27 +238,27 @@ namespace ufo
         hr.body = conjoin(lin, m_efac);
         outgs[hr.srcRelation].push_back(chcs.size()-1);
 
-        ExprVector origDstVars;
+        ExprVector origDstSymbs;
 
         if (!hr.isQuery)
         {
           for (auto it = head->args_begin()+1, end = head->args_end(); it != end; ++it)
-            origDstVars.push_back(*it);
+            origDstSymbs.push_back(*it);
         }
 
-        hr.assignVarsAndRewrite (origSrcVars, invVars[hr.srcRelation],
-                                 origDstVars, invVars[hr.dstRelation]);
+        hr.assignVarsAndRewrite (origSrcSymbs, invVars[hr.srcRelation],
+                                 origDstSymbs, invVars[hr.dstRelation]);
 
         for (auto &a: args)
         {
           bool found = false;
-          for (auto &b : origDstVars)
+          for (auto &b : origDstSymbs)
           {
             if (a == b) found = true;
           }
           if (! found)
           {
-            for (auto &b : origSrcVars)
+            for (auto &b : origSrcSymbs)
             {
               if (a == b) found = true;
             }

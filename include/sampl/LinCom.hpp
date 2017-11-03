@@ -1,13 +1,12 @@
 #ifndef LINCOM__HPP__
 #define LINCOM__HPP__
 
-#define DEFAULTARITY 2
 #define PRIORNOVISIT 0
 #define PRIORSTEP 30
 #define FREQCOEF 15
 #define EPSILONFRACTION 5
 
-#include "Distribution.hpp"
+#include "deep/Distribution.hpp"
 #include "ae/ExprSimpl.hpp"
 
 using namespace std;
@@ -17,24 +16,24 @@ namespace ufo
 {
 
   typedef vector<vector <int>> lincoms;
-  
+
   class LAterm
   {
     public:
-    
+
     std::vector<int> vcs;
-    
+
     int arity;
     int cmpop;
     int intconst;
-  
+
     LAterm(){}
-    
+
     int getSize()
     {
       return 3 + 2 * arity;
     }
-    
+
     void normalizePlus()
     {
       int j;
@@ -55,45 +54,50 @@ namespace ufo
       }
     }
   };
-  
+
   inline bool operator== (LAterm& a, LAterm& b)
   {
     if (a.arity != b.arity) return false;
     if (a.cmpop != b.cmpop) return false;
     if (a.intconst != b.intconst) return false;
-    
+
     for (int i = 0; i < a.vcs.size(); i++)
     {
       if (a.vcs[i] != b.vcs[i]) return false;
     }
     return true;
   }
-  
+
   class LAdisj
   {
     private:
     lincoms id;
-    
+
     public:
-    
+
     int arity = 0;
     vector<LAterm> dstate;    // i.e., disjunctive-state
-    
+
     LAdisj(){}
-    
+
+    bool empty()
+    {
+      return arity == 0;
+    }
+
     LAterm& newDisj()
     {
       arity++;
       dstate.push_back(LAterm());
       return dstate.back();
     }
-    
+
     void addDisj(LAterm& s)
     {
       arity++;
       dstate.push_back(s);
     }
-    
+
     void printLAdisj()
     {
       outs () << "Cur LAdisj (OR arity = " << arity << "): \n";
@@ -101,11 +105,11 @@ namespace ufo
       {
         outs() << "   disj #" << i << ":\n";
         LAterm& s = dstate[i];
-        
+
         outs() << "      ** arity +: " << s.arity << "\n";
         outs() << "      ** comparison op: " << s.cmpop << "\n";
         outs() << "      ** const: " << s.intconst << "\n";
-        
+
         for (int j = 0; j < s.vcs.size(); )
         {
           outs() << "      ** var: " << s.vcs[j++] << "\n";
@@ -114,7 +118,7 @@ namespace ufo
       }
       outs() << "\n";
     }
-    
+
     void normalizePlus()
     {
       for (int i = 0; i < dstate.size(); i++)
@@ -123,7 +127,7 @@ namespace ufo
         s.normalizePlus();
       }
     }
-    
+
     lincoms& getId()
     {
       if (id.size() == 0)
@@ -133,19 +137,18 @@ namespace ufo
           id.push_back(dstate[i].vcs);
         }
       }
-        
+
       return id;
     }
-    
+
     void clear()
     {
       arity = 0;
       dstate.clear();
       id.clear();
     }
-    
   };
-  
+
   inline void clone(LAterm& s, LAterm& t)
   {
     t.intconst = s.intconst;
@@ -156,7 +159,7 @@ namespace ufo
       t.vcs.push_back(s.vcs[i]);
     }
   }
-  
+
   inline void clone(LAdisj& s, LAdisj& t)
   {
     for (int i = 0; i < s.arity; i++)
@@ -164,7 +167,7 @@ namespace ufo
       t.addDisj(s.dstate[i]);
     }
   }
-  
+
   inline void dropDisj(LAdisj& s, LAdisj& t, int ind)
   {
     assert (s.arity > 1);
@@ -173,7 +176,7 @@ namespace ufo
       if (i != ind) t.addDisj(s.dstate[i]);
     }
   }
-  
+
   inline int getVarIndex(int var, vector<int>& vec)
   {
     int i = 0;
@@ -188,147 +191,139 @@ namespace ufo
   class LAfactory
   {
     private:
-    
+
     ExprFactory &m_efac;
     ExprVector vars;
-    
+
     vector<int> varInds;
     vector<int> intCoefs;
     vector<int> intConsts;
-    
+
     ExprVector intCoefsE;    // symmetric vectors with Expressions
     ExprVector intConstsE;
     ExprVector cmpOps;
-    
+
     Expr auxVar1;
     Expr auxVar2;
-    
+
     int indexGT;
     int indexGE;
 
     ExprSet nonlinVarsSet;
 
     public:
-    
+
     ExprMap nonlinVars;
-    
+
     // set of fields related to guessing:
-    
+
     int prVarsDistrRange;
-    density orAritiesDensity;
+    set<int> orArities;
     map<int, density> plusAritiesDensity;
     map<int, density> intConstDensity;
     map<int, density> cmpOpDensity;
     map<int, vector<density>> varDensity;
     map<int, map<int, density>> coefDensity;
     vector<vector<set<int>>> varCombinations;
-    vector<LAdisj> samples;
-    vector<int> learntLemmas;    // indeces to samples
-    ExprSet learntExprs;   // lemmas from learntLemmas
+
     map<lincoms, vector<weights>> ineqPriors;
     map<lincoms, set<int>> visited;
     bool aggressivepruning;
-    
+
     LAfactory(ExprFactory &_efac, bool _aggressivepruning) :
-    m_efac(_efac), aggressivepruning(_aggressivepruning)
-    {};
-    
+        m_efac(_efac), aggressivepruning(_aggressivepruning){};
+
     void addVar(Expr var)
     {
       vars.push_back(var);
     }
-    
+
     void addConst(int c)
     {
       intConsts.push_back(c);
     }
-    
+
     void addIntCoef(int coef)
     {
       intCoefs.push_back(coef);
     }
-    
+
     void initialize()  // should be called after addVar, addConst, and addIntCoef
     {
-      assert (intCoefs.size() > 0);
-      assert (intConsts.size() > 0);
-      assert (vars.size() > 0);
-      
+//      assert (intCoefs.size() > 0);
+//      assert (intConsts.size() > 0);
+//      assert (vars.size() > 0);
+
       prVarsDistrRange = 2 * intConsts.size();
-      
+
       // auxiliary variables for inequations:
       auxVar1 = bind::intVar(mkTerm<string>("aux_deephorn_1", m_efac));
       auxVar2 = bind::intVar(mkTerm<string>("aux_deephorn_2", m_efac));
-      
+
       for (int i = 0; i < vars.size(); i++) varInds.push_back(i);
-        
+
       // two comparison operators (> and >=), so indexGT < indexGE
       cmpOps.push_back(mk<GT>  (auxVar1, auxVar2));
       indexGT = cmpOps.size() - 1;
-      
+
       cmpOps.push_back(mk<GEQ> (auxVar1, auxVar2));
       indexGE = cmpOps.size() - 1;
-      
+
 //      // finally, map values to expressions
       for (auto a : intCoefs) intCoefsE.push_back(mkTerm (mpz_class (a), m_efac));    // assemble expressions
       for (auto a : intConsts) intConstsE.push_back(mkTerm (mpz_class (a), m_efac));  //
 
       for (auto &a : nonlinVars) nonlinVarsSet.insert(a.second);
     }
-    
+
     vector<int>& getConsts()
     {
       return intConsts;
     }
-    
+
     ExprVector& getVars()
     {
       return vars;
     }
-    
+
     int getVar(int ind)
     {
       return varInds[ind];
     }
-    
-    Expr getVarE(int ind)
-    {
-      return vars[ind];
-    }
-    
+
     int getIndexGT()
     {
       return indexGT;
     }
-    
+
     int getIndexGE()
     {
       return indexGE;
     }
-    
+
     int switchCmpOp(int ind)
     {
       // recall that there are two ops: >=, >
       assert (cmpOps.size() == 2);
-      
+
       return (ind == 0) ? 1 : 0;
     }
-    
+
     int getIntCoef(int i)
     {
       return intCoefs[i];
     }
-    
+
     int getIntCoefsSize()
     {
       return intCoefs.size();
     }
-    
+
     int getCmpOpsSize()
     {
       return cmpOps.size();
     }
-    
+
     Expr getAtom(Expr templ, Expr var1, Expr var2)
     {
       Expr res = templ;
@@ -336,30 +331,30 @@ namespace ufo
       res = replaceAll(res, auxVar2, var2);
       return res;
     }
-    
+
     Expr assembleLinComb(LAterm& s)
     {
       ExprVector apps;
-      
+
       for (int i = 0; i < s.vcs.size(); i = i + 2)
       {
         Expr var = vars [ s.vcs[i] ];
         Expr coef = intCoefsE [ s.vcs[i + 1] ];
         apps.push_back(mk<MULT>(coef, var));
       }
-      
+
       if (s.arity == 1) return apps[0];
-      
+
       return mknary<PLUS> (apps);
     }
-    
+
     Expr toExpr (LAterm& s, bool replaceNonlin=true)
     {
       Expr templ = cmpOps [ s.cmpop ];
       Expr ic = intConstsE [ s.intconst ];
       Expr lc = assembleLinComb(s);
       Expr ineq = getAtom(templ, lc, ic);
-      
+
       if (replaceNonlin && nonlinVarsSet.size() > 0)
       {
         while (!emptyIntersect(ineq, nonlinVarsSet)) // replace cascadically
@@ -367,14 +362,14 @@ namespace ufo
           for (auto &a : nonlinVars) ineq = replaceAll(ineq, a.second, a.first);
         }
       }
-      
+
       return ineq;
     }
-    
+
     Expr toExpr (LAdisj& curCandCode)
     {
       int ar = curCandCode.arity;
-      
+
       ExprSet dsj;
       for (int i = 0; i < ar; i++)
       {
@@ -382,16 +377,13 @@ namespace ufo
       }
       return disjoin(dsj, m_efac);
     }
-    
-    bool exprToLAdisj(Expr ex, LAdisj& sample)
+
+    void exprToLAdisj(Expr ex, LAdisj& sample)
     {
       if (isOpX<OR>(ex))
       {
-        bool res = true;
         for (auto it = ex->args_begin (), end = ex->args_end (); it != end; ++it)
-          res &= exprToLAdisj(*it, sample);
-        
-        return res;
+          exprToLAdisj(*it, sample);
       }
       else if (isOpX<GEQ>(ex) || isOpX<GT>(ex))
       {
@@ -416,13 +408,13 @@ namespace ufo
         s.cmpop = getVarIndex(aux, cmpOps);
         s.intconst = getVarIndex(lexical_cast<int>(ex->right()), intConsts);
 
-        if (s.intconst == -1 || s.cmpop == -1) return false;
-        
+        if (s.intconst == -1 || s.cmpop == -1) return;
+
         for (auto &e : all)
         {
           Expr curVar;
           int curCoef;
-          
+
           if (isOpX<MULT>(e))
           {
             if (isNumericConst(e->left()))
@@ -441,41 +433,35 @@ namespace ufo
             curVar = e;
             curCoef = 1;
           }
-          
+
           int varind = getVarIndex(curVar, vars);
           int coefind = getVarIndex(curCoef, intCoefs);
 
-          if (varind == -1 || coefind == -1) return false;
+          if (varind == -1 || coefind == -1) return;
 
           s.vcs.push_back(varind);
           s.vcs.push_back(coefind);
-          
+
         }
-        bool res = addDisjFilter(s, sample);
-        if (!res) return false;
-        
-        bool alpos = true;
-        for(int v : s.vcs) alpos &= (v >= 0);
-        
-        return (alpos && s.vcs.size() == 2*(s.arity));
+
+        for(int v : s.vcs) if (v < 0) return;
+
+        if (s.vcs.size() != 2*(s.arity)) return;
+
+        addDisjFilter(s, sample);
       }
-      else if (isOpX<NEG>(ex))
-      {
-        return false;
-      }
-      return false;
     }
-    
+
     int equalCoefs(LAterm& s)
     {
       int pat = intCoefs[ s.vcs[1] ];
       for (int j = 3; j < s.vcs.size(); j = j+2)
         if (pat != intCoefs[ s.vcs[j] ])
           return 0;
-      
+
       return pat;
     }
-    
+
     void invertTerm(LAterm& s, LAterm& t)
     {
       clone(s, t);
@@ -484,18 +470,18 @@ namespace ufo
         int coef = intCoefs[ s.vcs[i] ];
         int invcoef = getVarIndex(-coef, intCoefs);
         assert(invcoef != -1);
-        
+
         t.vcs[i] = invcoef;
       }
-      
+
       int iconst = intConsts[ s.intconst ];
       int invconst = getVarIndex(-iconst, intConsts);
       assert(invconst != -1);
-      
+
       t.intconst = invconst;
       t.cmpop = switchCmpOp(s.cmpop);
     }
-    
+
     void invertDisj(LAdisj& s, LAdisj& t, int ind)
     {
       for (int i = 0; i < s.arity; i++)
@@ -510,7 +496,7 @@ namespace ufo
         }
       }
     }
-    
+
     bool mergeDisj(LAdisj& s1, LAdisj& s2, LAdisj& t)
     {
       for (int i = 0; i < s1.arity; i++)
@@ -528,110 +514,110 @@ namespace ufo
       }
       return true;
     }
-    
+
     bool equivLinCom(LAterm& a, LAterm& b)
     {
       // decide equivalence gradually:
-      
+
       if (a.arity != b.arity) return false;
-      
+
       // check equivalence of vars
       for (int i = 0; i < a.vcs.size(); i = i + 2)
       {
         if (a.vcs[i] != b.vcs[i]) return false;
       }
-      
+
       if (a.vcs.size() == 2) return (a.vcs[1] == b.vcs[1]);
-      
+
       // finally, coefficients
       float c1 = (float)intCoefs[a.vcs[1]] / (float)intCoefs[b.vcs[1]];
-      
+
       if (c1 < 0) return false;
-        
+
       for (int i = 3; i < a.vcs.size(); i = i + 2)
       {
         float c2 = (float)intCoefs[a.vcs[i]] / (float)intCoefs[b.vcs[i]];
         if (c2 < 0) return false;
-        
+
         if (fabs(c1 - c2) > 0.0001 ) return false; // hardcode here
       }
-      
+
       return true;
     }
-    
+
     // very approximate result as for equivLinCom (used in the aggressive mode)
     bool approxRedund(LAterm& a, LAterm& b)
     {
       // decide equivalence gradually:
-      
+
       if (a.arity != b.arity) return false;
-      
+
       // check equivalence of vars
       for (int i = 0; i < a.vcs.size(); i = i + 2)
       {
         if (a.vcs[i] != b.vcs[i]) return false;
       }
-      
+
       for (int i = 1; i < a.vcs.size(); i = i + 2)
       {
         if (intCoefs[a.vcs[i]] >= 0 != intCoefs[b.vcs[i]] >= 0) return false;
       }
-      
+
       return true;
     }
-    
+
     // identifies some logical implications, e.g., x + 2y > 0 is stronger than x + 2y >= 10
     // false means "we don't know"
     bool stronger(LAterm& s, LAterm& t)
     {
       if (s.vcs.size() != t.vcs.size()) return false;
-      
+
       for (int i = 0; i < s.vcs.size(); i++)
       {
         if (s.vcs[i] != t.vcs[i]) return false;
       }
-      
+
       // Ax > b stronger than Ax >= b
       if (s.intconst == t.intconst)
         return (s.cmpop <= t.cmpop);  // the smaller index the stronger formula
-      
+
       // Ax > / >= b stronger than Ax > / >= c iff b > c
       return (s.intconst > t.intconst);
     }
-    
+
     // symmetric to stronger
     bool weaker(LAterm& s, LAterm& t)
     {
       if (s.vcs.size() != t.vcs.size()) return false;
-      
+
       for (int i = 0; i < s.vcs.size(); i++)
       {
         if (s.vcs[i] != t.vcs[i]) return false;
       }
-      
+
       if (s.intconst == t.intconst)
         return (s.cmpop >= t.cmpop);
-      
+
       return (s.intconst < t.intconst);
     }
-    
+
     void getEquivalentFormulas(LAdisj& sample, vector<LAdisj>& equivs)
     {
       equivs.push_back(sample);
       lincoms& id = sample.getId();
-     
+
       for (int i = 0; i < sample.arity; i++)
       {
         LAterm& s = sample.dstate[i];
         Expr cmpop = cmpOps[ s.cmpop ];
         int intconst = intConsts [ s.intconst ];
-        
+
         // get the formulas equivalent to this one, and run the same procedure for them:
-        
+
         // if (ax + ax > a) then we can replace a by b, c,... of the same sign
-        
+
         int coef = equalCoefs(s);
-        
+
         if (coef != 0 && coef == intconst)
         {
           for (int j = 0; j < intCoefs.size(); j++)
@@ -639,10 +625,9 @@ namespace ufo
             int thisConst = intCoefs[j];
             if (thisConst == coef) continue;
             if ((thisConst<0) != (coef<0)) continue;
-            
+
             int indProg = getVarIndex(thisConst, intConsts);  // GF?
             if (indProg == -1) continue;
-            
 
             LAdisj c;
             clone(sample, c);
@@ -654,18 +639,18 @@ namespace ufo
             equivs.push_back(c);
           }
         }
-        
+
         // if (ax + ax > 0) then we can replace a by b,c,... of the same sign
-        
+
         else if (coef != 0 && 0 == intconst)
         {
-          
+
           for (int j = 0; j < intCoefs.size(); j++)
           {
             int thisConst = intCoefs[j];
             if (thisConst == coef) continue;
             if ((thisConst<0) != (coef<0)) continue;
-            
+
             LAdisj c;
             clone(sample, c);
             for (int k = 0; k < c.dstate[i].vcs.size(); k ++)
@@ -677,7 +662,7 @@ namespace ufo
         }
       }
     }
-    
+
     bool addDisjFilter(LAterm& s, LAdisj& d)
     {
       int skip = false;
@@ -695,7 +680,7 @@ namespace ufo
           // disjunction of s and t is equal s, so swap these two guys:
           t.cmpop = s.cmpop;
           t.intconst = s.intconst;
-          
+
           skip = true;
           break;
         }
@@ -716,40 +701,29 @@ namespace ufo
       }
       return true;
     }
-    
-    Expr getFreshCandidate()
+
+    bool guessTerm (LAdisj& curTerm, int arity)
     {
-      samples.push_back(LAdisj());
-      LAdisj& curTerm = samples.back();
-      if (!guessTerm(curTerm)) return NULL;
-      
-      curTerm.normalizePlus();
-      return toExpr(curTerm);
-    }
-    
-    bool guessTerm (LAdisj& curTerm)
-    {
-      curTerm.clear();
-      int arity = chooseByWeight(orAritiesDensity);
-      
+      if (isEmpty(plusAritiesDensity[arity])) return false;
+
       vector<set<int>> varcombs;
       vector<LAterm> terms;
-      
+
       // first, guess var combinations:
-      
+
       for (int i = 0; i < arity; i++)
       {
         terms.push_back(LAterm());
         LAterm& la = terms.back();
         la.arity = chooseByWeight(plusAritiesDensity[arity]);
-        
+
         vector<set<int>>& varCombination = varCombinations[la.arity];
         int comb = chooseByWeight(varDensity[arity][la.arity]);
         varcombs.push_back(varCombination[comb]);
       }
-      
+
       // then, guess coefficients to complete the lin. combination
-      
+
       for (int i = 0; i < arity; i++)
       {
         LAterm& la = terms[i];
@@ -759,12 +733,12 @@ namespace ufo
           int coef = chooseByWeight(coefDensity[arity][v]);
           la.vcs.push_back(coef);
         }
-        
+
         if (i != 0)
         {
           for (int j = 0; j < i; j++)
           {
-            
+
             if (!aggressivepruning && equivLinCom(la, curTerm.dstate[j]))
             {
               return false;
@@ -776,46 +750,47 @@ namespace ufo
           }
         }
         curTerm.addDisj(la);
-        
+
       }
-      
+
       // finally, guess operator and constant based on the information we learned from the previous samples:
-      
+
       // WARNING: if aggressivepruning, we may skip checking some candidates
       if (aggressivepruning && isSampleVisitedWeak(curTerm)) return false;
-      
+
       if (!aggressivepruning && isSampleVisitedStrong(curTerm)) return false;
-      
+
       lincoms& id = curTerm.getId();
-      
+
       for (int i = 0; i < arity; i++)      // finally, guess operator and constant
       {
         LAterm& la = curTerm.dstate[i];
         guessNewInequality(id, i, la, arity);
-        
-        if (aggressivepruning)
+
+        // GF: currently disabled:
+        /* if (aggressivepruning)
         {
-          for (int k = 0; k < learntLemmas.size(); k++)
+          for (int k = 0; k < learnedLemmas.size(); k++)
           {
-            LAdisj& lcs = samples[ learntLemmas [k] ];
+            LAdisj& lcs = samples[ learnedLemmas [k] ];
             if (lcs.arity == 1 && lcs.dstate[0] == la) return false;
           }
-        }
+        } */
       }
       return true;
     }
-    
+
     void guessNewInequality (lincoms& id, int disj, LAterm& curLAterm, int ar)
     {
       vector<weights>& distrs = ineqPriors[id];
       initDistrs(distrs, id.size(), prVarsDistrRange);
-      
+
       if (!aggressivepruning)
       {
         // re-initialize distribution (if empty)
         reInitialize(id, disj);
       }
-      
+
       if (isDefault(distrs[disj]))       // if it's the first time we look at this lin.combination,
       {                                               // we might want to guess a candidate based on the code
         curLAterm.intconst = chooseByWeight(intConstDensity[ar]);
@@ -829,51 +804,51 @@ namespace ufo
         curLAterm.cmpop = (ch % 2 == 0) ? getIndexGE() : getIndexGT();
       }
     }
-    
+
     bool isSampleVisitedStrong(LAdisj& tmpl)
     {
       // we should exhaust the search space of all the disjuncts
       // before abandon the entire disjunction
-      
+
       // currently, works for disjunctions with one disjunct
       // (for others, may keep throwing the same candidates again and again)
       lincoms& id = tmpl.getId();
-      
+
       if (visited[id].size() == tmpl.arity)
       {
         return true;
       }
       return false;
     }
-    
+
     bool isSampleVisitedWeak(LAdisj& tmpl)
     {
       // once the search space for one of the disjuncts is exhauseted
       // we abandoned the entire disjunction
       lincoms& id = tmpl.getId();
-      
+
       if (visited[id].size() > 0)
       {
         return true;
       }
       return false;
     }
-    
+
     bool isVisited(lincoms& id, int disj)
     {
       set<int>& s = visited[id];
-      
+
       if (std::find(std::begin(s), std::end(s), disj) != std::end(s))
         return true;
-      
+
       weights& d = ineqPriors[id][disj];
-      
+
       if (ineqPriors[id].size() == 0)
       {
         outs() << "WARNING: Priorities are not set up here\n";
         return false;
       }
-      
+
       for (int i = 0; i < d.size(); i++)
       {
         if (d[i] != PRIORNOVISIT) return false;
@@ -881,25 +856,25 @@ namespace ufo
       s.insert(disj);
       return true;
     }
-    
+
     void reInitialize(lincoms& id, int disj, int def = 1000)
     {
       set<int>& s = visited[id];
-      
+
       if (std::find(std::begin(s), std::end(s), disj) == std::end(s)) return;
-      
+
       weights& d = ineqPriors[id][disj];
-      
+
       for (int i = 0; i < d.size(); i++) d[i] = def;
     }
-    
-    void prioritiesGarbage(LAdisj& failed)
+
+    void prioritiesBlocked(LAdisj& failed)
     {
       lincoms& id = failed.getId();
       vector<weights>& distrs = ineqPriors[id];
-      
+
       initDistrs(distrs, failed.arity, prVarsDistrRange);
-      
+
       for (int i = 0; i < failed.arity; i++)
       {
         LAterm& s = failed.dstate[i];
@@ -907,18 +882,18 @@ namespace ufo
         isVisited(id, i);
       }
     }
-    
+
     void prioritiesFailed(LAdisj& failed)
     {
       lincoms& id = failed.getId();
       vector<weights>& distrs = ineqPriors[id];
-      
+
       initDistrs(distrs, failed.arity, prVarsDistrRange);
-      
+
       for (int i = 0; i < failed.arity; i++)
       {
         LAterm& s = failed.dstate[i];
-        
+
         int lim = s.intconst * 2 + (getIndexGT() == s.cmpop ? 1 : 0);
         for (int j = 0; j < prVarsDistrRange ; j++)
         {
@@ -933,22 +908,22 @@ namespace ufo
             distrs[i][j] = min ( distrs[i][j], (lim - j) * PRIORSTEP );
           }
         }
-        
+
         isVisited(id, i);
       }
     }
 
-    void prioritiesLearnt(LAdisj& learnt)
+    void prioritiesLearned(LAdisj& learned)
     {
-      lincoms& id = learnt.getId();
+      lincoms& id = learned.getId();
       vector<weights>& distrs = ineqPriors[id];
-      
-      initDistrs(distrs, learnt.arity, prVarsDistrRange);
-      
-      for (int i = 0; i < learnt.arity; i++)
+
+      initDistrs(distrs, learned.arity, prVarsDistrRange);
+
+      for (int i = 0; i < learned.arity; i++)
       {
-        LAterm& s = learnt.dstate[i];
-        
+        LAterm& s = learned.dstate[i];
+
         int lim = s.intconst * 2 + (getIndexGT() == s.cmpop ? 1 : 0);
         for (int j = 0; j < prVarsDistrRange ; j++)
         {
@@ -963,45 +938,48 @@ namespace ufo
             distrs[i][j] = min ( distrs[i][j], (j - lim) * PRIORSTEP );
           }
         }
-        
+
         isVisited(id, i);
       }
     }
-    
-    void assignPrioritiesForLearnt(LAdisj& learnt)
+
+    void assignPrioritiesForLearned(LAdisj& learned)
     {
       if (!aggressivepruning) return;
 
       vector<LAdisj> eqs;
-      getEquivalentFormulas(learnt, eqs);
-      for (auto &a : eqs) prioritiesLearnt (a);
+      getEquivalentFormulas(learned, eqs);
+      for (auto &a : eqs) prioritiesLearned (a);
 
-      if (learnt.arity == 1)
+      if (learned.arity == 1)
       {
         LAdisj t;
-        invertDisj (learnt, t, 0);  // this is guaranteed to fail
+        invertDisj (learned, t, 0);  // this is guaranteed to fail
         assignPrioritiesForFailed(t);
       }
+
+      // GF: currently disabled
+      /*
       else
       {
         vector<LAterm> invTerms;
-        for (int i = 0; i < learnt.arity; i++)
+        for (int i = 0; i < learned.arity; i++)
         {
           invTerms.push_back(LAterm());
-          invertTerm(learnt.dstate[i], invTerms.back());
+          invertTerm(learned.dstate[i], invTerms.back());
         }
-        
-        for (int i = 0; i < learnt.arity; i++)
+
+        for (int i = 0; i < learned.arity; i++)
         {
           bool canblock = true;
-          for (int j = 0; j < learnt.arity; j++)
+          for (int j = 0; j < learned.arity; j++)
           {
             if (i == j) continue;
-            // search for invTerms[j] among learnt lemmas
+            // search for invTerms[j] among learned lemmas
             bool found = false;
-            for (int k = 0; k < learntLemmas.size(); k++)
+            for (int k = 0; k < learnedLemmas.size(); k++)
             {
-              LAdisj& lcs = samples[ learntLemmas [k] ];
+              LAdisj& lcs = samples[ learnedLemmas [k] ];
               if (lcs.arity > 1) continue;
               if (stronger(lcs.dstate[0], invTerms[j]))
               {
@@ -1025,9 +1003,9 @@ namespace ufo
             assignPrioritiesForFailed(lcs);
           }
         }
-      }
+      } */
     }
-    
+
     void assignPrioritiesForFailed(LAdisj& failed)
     {
       if (!aggressivepruning) return;
@@ -1036,16 +1014,16 @@ namespace ufo
       getEquivalentFormulas(failed, eqs);
       for (auto &a : eqs) prioritiesFailed (a);
     }
-    
-    void assignPrioritiesForGarbage(LAdisj& failed)
+
+    void assignPrioritiesForBlocked(LAdisj& failed)
     {
       if (!aggressivepruning) return;
 
       vector<LAdisj> eqs;
       getEquivalentFormulas(failed, eqs);
-      for (auto &a : eqs) prioritiesGarbage (a);
+      for (auto &a : eqs) prioritiesBlocked (a);
     }
-    
+
     void initDensities(set<int>& arities)
     {
       // preparing var combinations;
@@ -1058,26 +1036,24 @@ namespace ufo
 
       for (auto ar : arities) initDensities(ar);
     }
-    
+
     void initDensities(int ar)
     {
-      orAritiesDensity[ar] = 0;
-      
       for (int i = 1; i < vars.size() + 1; i++)
       {
         plusAritiesDensity[ar][i] = 0;
-        
+
         for (int j = 0; j < intCoefs.size(); j++)
         {
           coefDensity[ar][i-1][j] = 0;
         }
       }
-      
+
       for (int i = 0; i < intConsts.size(); i++)
       {
         intConstDensity[ar][i] = 0;
       }
-      
+
       for (int i = 0; i < cmpOps.size(); i++)
       {
         cmpOpDensity[ar][i] = 0;
@@ -1108,82 +1084,37 @@ namespace ufo
           guessUniformly(min_freq) / num_zeros / EPSILONFRACTION);
     }
 
-    void stabilizeDensities(set<int>& arities, bool addEpsilon, bool freqs=true)
+    void stabilizeDensities(int ar, bool addEpsilon, bool freqs)
     {
       int freqCoef = freqs ? FREQCOEF : 1;
       int min_freq = INT_MAX;
       int num_zeros = 0;
       int eps = 0;
 
-      for (auto & ar : orAritiesDensity)
+      for (auto & pl : plusAritiesDensity[ar])
       {
-        if (ar.second == 0) num_zeros++;
+        if (pl.second == 0) num_zeros++;
         else
         {
-          ar.second *= freqCoef;
-          min_freq = min(min_freq, ar.second);
+          pl.second *= freqCoef;
+          min_freq = min(min_freq, pl.second);
         }
       }
 
       if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
-        else if (num_zeros == orAritiesDensity.size()) eps = 1;
-         else eps = 0;
+        else if (num_zeros == plusAritiesDensity[ar].size()) eps = 1;
+          else eps = 0;
 
-      for (auto & ar : orAritiesDensity)
+      for (auto & pl : plusAritiesDensity[ar])
       {
-        if (ar.second == 0) ar.second = eps;
+        if (pl.second == 0) pl.second = eps;
       }
 
-      for (auto & ar : arities)
+      for (int i = 0; i < vars.size(); i++)
       {
         min_freq = INT_MAX;
         num_zeros = 0;
-        for (auto & pl : plusAritiesDensity[ar])
-        {
-          if (pl.second == 0) num_zeros++;
-          else
-          {
-            pl.second *= freqCoef;
-            min_freq = min(min_freq, pl.second);
-          }
-        }
-
-        if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
-          else if (num_zeros == plusAritiesDensity[ar].size()) eps = 1;
-            else eps = 0;
-
-        for (auto & pl : plusAritiesDensity[ar])
-        {
-          if (pl.second == 0) pl.second = eps;
-        }
-
-        for (int i = 0; i < vars.size(); i++)
-        {
-          min_freq = INT_MAX;
-          num_zeros = 0;
-          for (auto & c : coefDensity[ar][i])
-          {
-            if (c.second == 0) num_zeros++;
-            else
-            {
-              c.second *= freqCoef;
-              min_freq = min(min_freq, c.second);
-            }
-          }
-
-          if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
-            else if (num_zeros == coefDensity[ar][i].size()) eps = 1;
-              else eps = 0;
-
-          for (auto & c : coefDensity[ar][i])
-          {
-            if (c.second == 0) c.second = eps;
-          }
-        }
-
-        min_freq = INT_MAX;
-        num_zeros = 0;
-        for (auto & c : intConstDensity[ar])
+        for (auto & c : coefDensity[ar][i])
         {
           if (c.second == 0) num_zeros++;
           else
@@ -1194,152 +1125,202 @@ namespace ufo
         }
 
         if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
-          else if (num_zeros == intConstDensity[ar].size()) eps = 1;
+          else if (num_zeros == coefDensity[ar][i].size()) eps = 1;
             else eps = 0;
 
-        for (auto & c : intConstDensity[ar])
+        for (auto & c : coefDensity[ar][i])
         {
           if (c.second == 0) c.second = eps;
         }
+      }
 
+      min_freq = INT_MAX;
+      num_zeros = 0;
+      for (auto & c : intConstDensity[ar])
+      {
+        if (c.second == 0) num_zeros++;
+        else
+        {
+          c.second *= freqCoef;
+          min_freq = min(min_freq, c.second);
+        }
+      }
+
+      if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
+        else if (num_zeros == intConstDensity[ar].size()) eps = 1;
+          else eps = 0;
+
+      for (auto & c : intConstDensity[ar])
+      {
+        if (c.second == 0) c.second = eps;
+      }
+
+      min_freq = INT_MAX;
+      num_zeros = 0;
+      for (auto & c : cmpOpDensity[ar])
+      {
+        if (c.second == 0) num_zeros++;
+        else
+        {
+          c.second *= freqCoef;
+          min_freq = min(min_freq, c.second);
+        }
+      }
+
+      if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
+        else if (num_zeros == cmpOpDensity[ar].size()) eps = 1;
+          else eps = 0;
+
+      for (auto & c : cmpOpDensity[ar])
+      {
+        if (c.second == 0) c.second = eps;
+      }
+
+      for (int i = 0; i < varDensity[ar].size(); i++)
+      {
         min_freq = INT_MAX;
         num_zeros = 0;
-        for (auto & c : cmpOpDensity[ar])
+        for (auto &b : varDensity[ar][i])
         {
-          if (c.second == 0) num_zeros++;
+          if (b.second == 0) num_zeros++;
           else
           {
-            c.second *= freqCoef;
-            min_freq = min(min_freq, c.second);
+            b.second *= freqCoef;
+            min_freq = min(min_freq, b.second);
           }
         }
 
         if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
-          else if (num_zeros == cmpOpDensity[ar].size()) eps = 1;
+          else if (num_zeros == varDensity[ar][i].size()) eps = 1;
             else eps = 0;
 
-        for (auto & c : cmpOpDensity[ar])
+        for (auto &b : varDensity[ar][i])
         {
-          if (c.second == 0) c.second = eps;
-        }
-
-        for (int i = 0; i < varDensity[ar].size(); i++)
-        {
-          min_freq = INT_MAX;
-          num_zeros = 0;
-          for (auto &b : varDensity[ar][i])
-          {
-            if (b.second == 0) num_zeros++;
-            else
-            {
-              b.second *= freqCoef;
-              min_freq = min(min_freq, b.second);
-            }
-          }
-
-          if (addEpsilon) eps = getEpsilon(min_freq, num_zeros);
-            else if (num_zeros == varDensity[ar][i].size()) eps = 1;
-              else eps = 0;
-
-          for (auto &b : varDensity[ar][i])
-          {
-            if (b.second == 0) b.second = eps;
-          }
+          if (b.second == 0) b.second = eps;
         }
       }
     }
 
-    void printCodeStatistics(set<int>& arities)
+    void calculateStatistics(LAdisj& lcs, int ar, bool freqs, bool addepsilon)
     {
-      outs() << "Int consts:\n";
-      for (auto &form: intConsts) outs() << " " << form ;
-      outs() << "\n";
-      
-      for (auto &a : orAritiesDensity)
+      if (freqs)
       {
-        outs() << "OR arity density: " << a.first << " <---> " << a.second << "\n";
+        // collect number of occurrences....
+
+        for (auto & lc : lcs.dstate)
+        {
+          // of arities of application of PLUS
+          plusAritiesDensity[ar][lc.arity] ++;
+
+          // of constants
+          intConstDensity[ar][lc.intconst] ++;
+
+          // of comparison operations
+          cmpOpDensity[ar][lc.cmpop] ++;
+
+          set<int> vars;
+          int vars_id = -1;
+          for (int j = 0; j < lc.vcs.size(); j = j+2) vars.insert(lc.vcs[j]);
+          for (int j = 0; j < varCombinations[lc.arity].size(); j++)
+          {
+            if (varCombinations[lc.arity][j] == vars)
+            {
+              vars_id = j;
+              break;
+            }
+          }
+          assert(vars_id >= 0);
+
+          // of variable combinations
+          varDensity[ar][lc.arity][vars_id] ++;
+
+          // of variable coefficients
+          for (int j = 1; j < lc.vcs.size(); j = j+2)
+          {
+            coefDensity[ ar ][ lc.vcs [j-1] ] [lc.vcs [j] ] ++;
+          }
+        }
       }
-      
-      for (auto ar : arities) printCodeStatistics(ar);
+      else
+      {
+        // same thing as in above; but instead of precise frequencies, we gather a rough presence
+
+        for (auto & lc : lcs.dstate)
+        {
+          // of arities of application of PLUS
+          plusAritiesDensity[ar][lc.arity] = 1;
+
+          // of constants
+          intConstDensity[ar][lc.intconst] = 1;
+
+          // of comparison operations
+          cmpOpDensity[ar][lc.cmpop] = 1;
+
+          set<int> vars;
+          int vars_id = -1;
+          for (int j = 0; j < lc.vcs.size(); j = j+2) vars.insert(lc.vcs[j]);
+          for (int j = 0; j < varCombinations[lc.arity].size(); j++)
+          {
+            if (varCombinations[lc.arity][j] == vars)
+            {
+              vars_id = j;
+              break;
+            }
+          }
+          assert(vars_id >= 0);
+
+          // of variable combinations
+          varDensity[ar][lc.arity][vars_id] = 1;
+
+          // of variable coefficients
+          for (int j = 1; j < lc.vcs.size(); j = j+2)
+          {
+            coefDensity[ ar ][ lc.vcs [j-1] ] [lc.vcs [j] ] = 1;
+          }
+        }
+      }
     }
-    
+
     void printCodeStatistics(int ar)
     {
       outs () << "(OR arity = " << ar << "):\n";
-      
+
       for (auto &a : plusAritiesDensity[ar])
       {
-        outs() << " Plus arity density: " << a.first << " <---> " << a.second << "\n";
+        outs() << " Plus arity density: " << a.first << " |--> " << a.second << "\n";
       }
-      
+
       for (auto &a : intConstDensity[ar])
       {
-        outs() << " IntConst density: " << intConsts[ a.first ] << " <---> " << a.second << "\n";
+        outs() << " IntConst density: " << intConsts[ a.first ] << " |--> " << a.second << "\n";
       }
-      
+
       for (auto &a : cmpOpDensity[ar])
       {
-        outs() << " Operator density: " << (a.first == indexGT ? ">" : ">=") << " <---> " << a.second << "\n";
+        outs() << " Operator density: " << (a.first == indexGT ? ">" : ">=") << " |--> " << a.second << "\n";
       }
-      
+
       for (int i = 0; i < varDensity[ar].size(); i++)
       {
         for (auto &b : varDensity[ar][i])
         {
           outs() << " Var Combination density: ";
-          
+
           for (int j : varCombinations[i][b.first])
           {
             outs() << *vars[j] << ", ";
           }
-          
-          outs() << " <---> " << b.second << "\n";
+
+          outs() << "\b\b |--> " << b.second << "\n";
         }
       }
-      
+
       for (int i = 0; i < vars.size(); i++)
       {
         for (int j = 0; j < getIntCoefsSize(); j++)
         {
           outs() << " Var Coefficient density: [" << getIntCoef(j) << " * "
-          << *vars[i] << "] <---> " << coefDensity[ar][i][j] << "\n";
-        }
-      }
-    }
-    
-    static inline void getCombinations(vector<int>& data, int start, int rem, vector< set<int> >& res)
-    {
-      if (start >= data.size()) return;
-      if (rem > data.size() - start) return;
-      
-      if (rem == 1)
-      {
-        for (int i = start; i < data.size(); i++)
-        {
-          set<int> res0;
-          res0.insert(data[i]);
-          res.push_back(res0);
-        }
-      }
-      else
-      {
-        // if include data[start]
-        vector< set<int>> res1;
-        getCombinations(data, start + 1, rem - 1, res1);
-        
-        for (int i = 0; i < res1.size(); i++)
-        {
-          res1[i].insert(data[start]);
-          res.push_back(res1[i]);
-        }
-        
-        // if skip data[start]
-        vector< set<int>> res2;
-        getCombinations(data, start + 1, rem, res2);
-        
-        for (int i = 0; i < res2.size(); i++)
-        {
-          res.push_back(res2[i]);
+          << *vars[i] << "] : " << coefDensity[ar][i][j] << "\n";
         }
       }
     }

@@ -113,7 +113,7 @@ namespace ufo
           if (!kept)
           {
             Expr new_name = mkTerm<string> ("__bnd_var_" + to_string(bindVar_index++), m_efac);
-            bindVars2.push_back(bind::intConst(new_name));
+            bindVars2.push_back(cloneVar(hr.dstVars[i],new_name));
           }
 
           body = replaceAll(body, hr.dstVars[i], bindVars2[i]);
@@ -122,7 +122,7 @@ namespace ufo
         for (int i = 0; i < hr.locVars.size(); i++)
         {
           Expr new_name = mkTerm<string> ("__loc_var_" + to_string(locVar_index++), m_efac);
-          Expr var = bind::intConst(new_name);
+          Expr var = cloneVar(hr.locVars[i], new_name);
 
           body = replaceAll(body, hr.locVars[i], var);
         }
@@ -217,17 +217,7 @@ namespace ufo
       return res;
     }
 
-    Expr getInv(ExprVector& vars)
-    {
-      assert(inv != NULL);
-
-      for (int i = 0; i < ruleManager.chcs[pr_ind].srcVars.size(); i++)
-      {
-        inv = replaceAll(inv, ruleManager.chcs[pr_ind].srcVars[i], vars[i]);
-      }
-
-      return inv;
-    }
+    Expr getInv() { return inv; }
 
     Expr getBoundedItp(int k)
     {
