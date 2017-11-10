@@ -1,7 +1,7 @@
 FreqHorn
 ========
 
-Satisfiability solver for constrained Horn clauses (CHC) based on the Expression library of <a href="http://seahorn.github.io/">SeaHorn</a> and the <a href="https://github.com/Z3Prover/z3">Z3</a> SMT solver. It combines probabilistic and syntax-guided methods to sample candidate invariants and checks their inductiveness / safety. Find more details at <a href="https://homes.cs.washington.edu/~grigory/freqhorn_preprint.pdf">FMCAD'17</a>.
+Satisfiability solver for constrained Horn clauses (CHC) based on the Expression library of <a href="http://seahorn.github.io/">SeaHorn</a> and the <a href="https://github.com/Z3Prover/z3">Z3</a> SMT solver. It combines probabilistic and syntax-guided methods to sample candidate invariants and checks their inductiveness / safety. Find more details at the FMCAD'17 <a href="http://www.cs.princeton.edu/~grigoryf/freqhorn.pdf">paper</a> and <a href="http://www.cs.princeton.edu/~grigoryf/freqhorn_slides.pdf">slides</a>.
 
 News
 ========
