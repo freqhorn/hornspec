@@ -760,9 +760,9 @@ namespace expr
     static inline void print (std::ostream &OS, const mpz_class &v, 
 			      int depth, bool brkt)
     {
-      /* print large numbers in hex */
+      /* print large numbers in hex
       if (v >= 65535 || v <= -65535)
-        OS << std::hex << std::showbase;
+        OS << std::hex << std::showbase; */
       
       OS << v;
       
