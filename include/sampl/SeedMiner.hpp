@@ -87,9 +87,9 @@ namespace ufo
     void addSeed(Expr term)
     {
       ExprSet actualVars;
-      
+
       expr::filter (term, bind::IsConst(), std::inserter (actualVars, actualVars.begin ()));
-      
+
       term = rewriteMultAdd(term);
 
       bool locals = false;
@@ -101,13 +101,13 @@ namespace ufo
       {
         addSeedHlp(term, hr.srcVars, actualVars);
       }
-      
+
       if (hr.dstRelation == invRel)
       {
         addSeedHlp(term, hr.dstVars, actualVars);
       }
     }
-    
+
     void obtainSeeds(Expr term)
     {
       if (bind::isBoolConst(term))
@@ -131,8 +131,17 @@ namespace ufo
         }
         else
         {
-          Expr term2 = convertToGEandGT(simplifyArithmDisjunctions(term));
-          addSeed(term2);        // add any disjunct as a seed;
+          Expr simplified = simplifyArithmDisjunctions(term);
+          if (isOpX<TRUE>(simplified))
+          {
+            for (auto it = term->args_begin(), end = term->args_end(); it != end; ++it)
+              addSeed(*it);
+          }
+          else
+          {
+            Expr term2 = convertToGEandGT(simplified);
+            addSeed(term2);
+          }
         }
       }
       else if (isOpX<AND>(term))
@@ -237,16 +246,13 @@ namespace ufo
       {
         // hr.isInductive
         Expr e = unfoldITE(body);
-
         ExprSet deltas; // some magic here for enhancing the grammar
         retrieveDeltas(e, hr.srcVars, hr.dstVars, deltas);
         for (auto & a : deltas)
         {
           obtainSeeds(a);
         }
-
         e = overapproxTransitions(e, hr.srcVars, hr.dstVars);
-
         e = simplifyBool(e);
         e = rewriteBoolEq(e);
         e = convertToGEandGT(e);

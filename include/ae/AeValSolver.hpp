@@ -235,7 +235,7 @@ namespace ufo
         }
         
         instantiations.push_back(conjoin(cnjs, efac));
-        if (debug) outs() << "Sanity check [" <<i << "]: " << u.isImplies(mk<AND> (s,mk<AND> (projections[i], instantiations[i])), t) << "\n";
+        if (debug) outs() << "Sanity check [" <<i << "]: " << u.implies(mk<AND> (s,mk<AND> (projections[i], instantiations[i])), t) << "\n";
       }
       Expr sk = mk<TRUE>(efac);
       
@@ -246,7 +246,7 @@ namespace ufo
       
       Expr skol = simplifiedAnd(skolSkope, sk);
       
-      if (true) outs() << "Sanity check: " << u.isImplies(mk<AND>(s, skol), t) << "\n";
+      if (true) outs() << "Sanity check: " << u.implies(mk<AND>(s, skol), t) << "\n";
       
       return skol;
     }
@@ -430,11 +430,12 @@ namespace ufo
       
       if (isOp<ComparissonOp>(exp))
       {
-
-        if (!bind::isBoolConst(var) && var != exp->left())
-          exp = ineqReverter(ineqMover(exp, var));
         // TODO: write a similar simplifier fo booleans
-        
+        if (!bind::isBoolConst(var) && var != exp->left())
+          exp = ineqMover(exp, var);
+
+        if (var != exp->left()) exp = ineqReverter(exp);
+
         assert (var == exp->left());
         
         if (isOpX<EQ>(exp) || isOpX<GEQ>(exp) || isOpX<LEQ>(exp)){
@@ -445,6 +446,9 @@ namespace ufo
           return getPlusConst (exp->right(), isInt, -1);
         }
         else if (isOpX<GT>(exp)){
+          return getPlusConst (exp->right(), isInt, 1);
+        }
+        else if (isOpX<NEQ>(exp)){
           return getPlusConst (exp->right(), isInt, 1);
         }
         else assert(0);

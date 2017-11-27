@@ -175,7 +175,7 @@ namespace ufo
           if (doRedundancyOptim)
           {
             Expr allLemmas = sf.getAllLemmas();
-            if (u.isImplies(allLemmas, cand))
+            if (u.implies(allLemmas, cand))
             {
               curCandidates[i] = mk<TRUE>(m_efac);
             }
@@ -402,7 +402,7 @@ namespace ufo
               }
 
               numOfSMTChecks++;
-              if (u.isImplies(hr.body, lemma2add)) continue;
+              if (u.implies(hr.body, lemma2add)) continue;
 
               hr.body = mk<AND>(hr.body, lemma2add);
 
@@ -599,7 +599,7 @@ namespace ufo
             break;
           }
 
-          if (sf.lf.nonlinVars.size() > 0 && !u.isSat(cand))  // keep searching
+          if (sf.lf.nonlinVars.size() > 0 && u.isFalse(cand))  // keep searching
           {
             sf.assignPrioritiesForFailed();
             skip = true;

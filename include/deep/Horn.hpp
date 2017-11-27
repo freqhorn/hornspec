@@ -51,8 +51,6 @@ namespace ufo
     bool isQuery;
     bool isInductive;
 
-    string suffix;
-
     void assignVarsAndRewrite (ExprVector& _srcVars, ExprVector& invVarsSrc,
                                ExprVector& _dstVars, ExprVector& invVarsDst)
     {
@@ -73,7 +71,7 @@ namespace ufo
       for (int i = 0; i < _dstVars.size(); i++)
       {
         // primed copy of var:
-        Expr new_name = mkTerm<string> (lexical_cast<string>(invVarsDst[i]) + "__", body->getFactory());
+        Expr new_name = mkTerm<string> (lexical_cast<string>(invVarsDst[i]) + "'", body->getFactory());
         Expr var = cloneVar(invVarsDst[i], new_name);
         dstVars.push_back(var);
 
@@ -148,17 +146,13 @@ namespace ufo
       }
     }
 
-    void parse(string smt)
+    void parse(string smt, string varname = " $_")
     {
       std::unique_ptr<ufo::ZFixedPoint <EZ3> > m_fp;
       m_fp.reset (new ZFixedPoint<EZ3> (m_z3));
       ZFixedPoint<EZ3> &fp = *m_fp;
       fp.loadFPfromFile(smt);
-      
-      string suff(""); //suff("_new");
-      
-      // a little hack here
-      
+
       for (auto &a : fp.m_rels)
       {
         if (a->arity() == 2)
@@ -170,7 +164,7 @@ namespace ufo
           decls.insert(a);
           for (int i = 1; i < a->arity()-1; i++)
           {
-            Expr new_name = mkTerm<string> ("__v__" + to_string(i - 1), m_efac);
+            Expr new_name = mkTerm<string> (varname + to_string(i - 1), m_efac);
             Expr var;
             if (isOpX<INT_TY> (a->arg(i)))
               var = bind::intConst(new_name);
@@ -183,13 +177,12 @@ namespace ufo
           }
         }
       }
-      
+
       for (auto &r: fp.m_rules)
       {
         chcs.push_back(HornRuleExt());
         HornRuleExt& hr = chcs.back();
 
-        hr.suffix = suff;
         hr.srcRelation = mk<TRUE>(m_efac);
         Expr rule = r;
         ExprVector args;
@@ -202,7 +195,7 @@ namespace ufo
           {
             Expr var = r->arg(i);
             Expr name = bind::name (r->arg(i));
-            Expr new_name = mkTerm<string> (lexical_cast<string> (name.get()) + suff, m_efac);
+            Expr new_name = mkTerm<string> (lexical_cast<string> (name.get()), m_efac);
             Expr var_new = bind::fapp(bind::rename(var, new_name));
             args.push_back(var_new);
           }
@@ -273,30 +266,28 @@ namespace ufo
 
     void print()
     {
-      int num = 0;
+      outs() << "CHCs:\n";
       for (auto &hr: chcs){
-        outs () << "\n=========================\n";
-        outs () << "RULE #" << num++ << "\n";
-        outs() << "\n body [" << * hr.body << "]  ->  " << * hr.head << "\n";
-        outs() << "\n" << * hr.srcRelation << "  ->  " << * hr.dstRelation << "\n";
-        
-        outs() << "\n  SRC VARS: ";
-        for(auto &a: hr.srcVars){
-          outs() << *a << ", ";
+        if (hr.isFact) outs() << "  INIT:\n";
+        if (hr.isInductive) outs() << "  TRANSITION RELATION:\n";
+        if (hr.isQuery) outs() << "  BAD:\n";
+
+        outs () << "    " << * hr.srcRelation;
+        if (hr.srcVars.size() > 0)
+        {
+          outs () << " (";
+          for(auto &a: hr.srcVars) outs() << *a << ", ";
+          outs () << "\b\b)";
         }
-        outs() << "\n";
-        outs() << "  DST VARS: ";
-        for(auto a: hr.dstVars){
-          outs() << *a << ", ";
+        outs () << " -> " << * hr.dstRelation;
+
+        if (hr.dstVars.size() > 0)
+        {
+          outs () << " (";
+          for(auto &a: hr.dstVars) outs() << *a << ", ";
+          outs () << "\b\b)";
         }
-        outs() << "\n";
-        outs() << "  LOCAL VARS: ";
-        for(auto a: hr.locVars){
-          outs() << *a << ", ";
-        }
-        
-        outs () << "\n";
-  
+        outs() << "\n    body: " << * hr.body << "\n";
       }
     }
   };

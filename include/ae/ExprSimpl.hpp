@@ -92,7 +92,7 @@ namespace ufo
     if (isOpX<MULT>(e)){
       return e;
     } else {
-      return mk<MULT>(e, mkTerm (mpz_class (1), e->getFactory()));
+      return mk<MULT>(mkTerm (mpz_class (1), e->getFactory()), e);
     }
   }
   
@@ -155,7 +155,6 @@ namespace ufo
    * Self explanatory
    */
   inline static Expr additiveInverse(Expr e){
-
     if (isOpX<UN_MINUS>(e)){
       return e->left();
     }
@@ -306,7 +305,7 @@ namespace ufo
     for (auto &a : lhs)
     {
       if (a == var) coef++;
-      if (a == additiveInverse(var)) coef--;
+      if (var == additiveInverse(a)) coef--;
     }
 
     r = mkplus(rhs, e->getFactory());

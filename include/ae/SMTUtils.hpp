@@ -24,14 +24,26 @@ namespace ufo
     z3(efac),
     smt (z3)
     {}
-    
+
+    Expr getModel(ExprVector& vars)
+    {
+      ExprVector eqs;
+      ZSolver<EZ3>::Model m = smt.getModel();
+      for (auto & v : vars) if (v != m.eval(v))
+      {
+        eqs.push_back(mk<EQ>(v, m.eval(v)));
+      }
+      return conjoin (eqs, efac);
+    }
+
     /**
      * SMT-check
      */
-    bool isSat(Expr a)
+    bool isSat(Expr a, Expr b)
     {
       smt.reset();
       smt.assertExpr (a);
+      smt.assertExpr (b);
       if (!smt.solve ()) {
         return false;
       }
@@ -39,20 +51,34 @@ namespace ufo
     }
     
     /**
+     * SMT-check
+     */
+    bool isSat(Expr a, bool reset=true)
+    {
+      if (reset) smt.reset();
+      smt.assertExpr (a);
+      if (!smt.solve ()) {
+        return false;
+      }
+      return true;
+    }
+
+    /**
      * SMT-based formula equivalence check
      */
     bool isEquiv(Expr a, Expr b)
     {
-      return !isSat(mk<AND>(a, mk<NEG>(b))) &&
-      !isSat(mk<AND>(b, mk<NEG>(a)));
+      return implies (a, b) && implies (b, a);
     }
     
     /**
      * SMT-based implication check
      */
-    bool isImplies (Expr a, Expr b)
+    bool implies (Expr a, Expr b)
     {
-      return ! isSat(mk<AND>(a, mk<NEG>(b)));
+      if (isOpX<TRUE>(b)) return true;
+      if (isOpX<FALSE>(a)) return true;
+      return ! isSat(a, mk<NEG>(b));
     }
     
     /**
@@ -60,7 +86,7 @@ namespace ufo
      */
     bool isTrue(Expr a){
       if (isOpX<TRUE>(a)) return true;
-      return isEquiv(a, mk<TRUE>(efac));
+      return !isSat(mk<NEG>(a));
     }
     
     /**
@@ -68,9 +94,25 @@ namespace ufo
      */
     bool isFalse(Expr a){
       if (isOpX<FALSE>(a)) return true;
-      return isEquiv(a, mk<FALSE>(efac));
+      return !isSat(a);
     }
-    
+
+    /**
+     * Check if v has only one sat assignment in phi
+     */
+    bool hasOneModel(Expr v, Expr phi) {
+      if (isFalse(phi)) return false;
+
+      ZSolver<EZ3>::Model m = smt.getModel();
+      Expr val = m.eval(v);
+      if (v == val) return false;
+
+      ExprSet assumptions;
+      assumptions.insert(mk<NEQ>(v, val));
+
+      return (!isSat(conjoin(assumptions, efac), false));
+    }
+
     /**
      * ITE-simplifier (prt 2)
      */
@@ -138,14 +180,11 @@ namespace ufo
     }
     
     /**
-     * Remove some redundant conjuncts from the formula
+     * Remove some redundant conjuncts from the set of formulas
      */
-    Expr removeRedundantConjuncts(Expr exp)
+    void removeRedundantConjuncts(ExprSet& conjs)
     {
-      ExprSet conjs;
-      getConj(exp, conjs);
-
-      if (conjs.size() < 2) return exp;
+      if (conjs.size() < 2) return;
       ExprSet newCnjs = conjs;
 
       for (auto & cnj : conjs)
@@ -159,12 +198,26 @@ namespace ufo
         ExprSet newCnjsTry = newCnjs;
         newCnjsTry.erase(cnj);
         
-        if (isImplies (conjoin(newCnjsTry, efac), cnj)) newCnjs.erase(cnj);
+        if (implies (conjoin(newCnjsTry, efac), cnj)) newCnjs.erase(cnj);
       }
-      
-      return conjoin(newCnjs, efac);
+      conjs = newCnjs;
     }
-    
+
+    /**
+     * Remove some redundant conjuncts from the formula
+     */
+    Expr removeRedundantConjuncts(Expr exp)
+    {
+      ExprSet conjs;
+      getConj(exp, conjs);
+      if (conjs.size() < 2) return exp;
+      else
+      {
+        removeRedundantConjuncts(conjs);
+        return conjoin(conjs, efac);
+      }
+    }
+
     /**
      * Remove some redundant disjuncts from the formula
      */
@@ -207,7 +260,15 @@ namespace ufo
       }
       return exp;
     }
-    
+
+    void serialize_formula(Expr form)
+    {
+      smt.reset();
+      smt.assertExpr(form);
+
+      smt.toSmtLib (outs());
+      outs().flush ();
+    }
   };
   
   /**

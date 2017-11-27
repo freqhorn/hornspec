@@ -70,7 +70,7 @@ namespace ufo
           if (!s.empty()) sf.assignPrioritiesForLearned();
         }
         numOfSMTChecks++;
-        if (!u.isImplies(sf.getAllLemmas(), l))
+        if (!u.implies(sf.getAllLemmas(), l))
         {
           sf.learnedExprs.insert(l);
           num++;

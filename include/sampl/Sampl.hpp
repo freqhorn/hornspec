@@ -101,12 +101,20 @@ namespace ufo
 
     void calculateStatistics(bool freqs, bool addepsilon)
     {
+      int maxArity = 0;
       set<int> orArities;
 
       for (auto &s : samples)
       {
+        maxArity = max (maxArity, s.arity());
         orArities.insert(s.arity());
         orAritiesDensity[s.arity()] ++;
+      }
+
+      for (int i = 0; i < maxArity; i++)
+      {
+        if (orAritiesDensity[i] == 0)
+          orArities.insert(i);
       }
 
       assert(orArities.size() > 0);
