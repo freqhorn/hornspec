@@ -2711,6 +2711,23 @@ namespace expr
       { return exp == s ? VisitAction::changeTo (t) : VisitAction::doKids (); }
     };
 
+    struct RAVALL: public std::unary_function<Expr,VisitAction>
+    {
+      ExprVector* s;
+      ExprVector* t;
+      unsigned int sz;
+
+      RAVALL (ExprVector* _s, ExprVector* _t) : s(_s), t(_t), sz(_s->size()) { }
+      VisitAction operator() (Expr exp) const
+      {
+        // TODO: could be optimized further,
+        // e.g., when all elements of s and t have the same type...
+        for (unsigned int i = 0; i < sz; i++ )
+          if (exp == s->at(i)) return VisitAction::changeTo (t->at(i));
+        return VisitAction::doKids ();
+      }
+    };
+
     struct RAVSIMP: public std::unary_function<Expr,VisitAction>
     {
       Expr s;
@@ -2914,6 +2931,14 @@ namespace expr
     return dagVisit (rav, exp);
   }
 
+  // pairwise replacing
+  inline Expr replaceAll (Expr exp, ExprVector& s, ExprVector& t)
+  {
+    assert(s.size() == t.size());
+    RAVALL rav(&s, &t);
+    return dagVisit (rav, exp);
+  }
+
   /** Replace all occurrences of s by t while simplifying the result */
   inline Expr replaceAllSimplify (Expr exp, Expr s, Expr t)
   {
@@ -3001,7 +3026,7 @@ namespace expr
     CV cv(e2);
     dagVisit (cv, e1);
     return cv.found;
-  }  
+  }
 
   /** Returns true if e1 contains applications of T */
   template <typename M> inline bool containsOp (Expr e1)
