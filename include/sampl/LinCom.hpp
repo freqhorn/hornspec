@@ -428,6 +428,11 @@ namespace ufo
               curCoef = lexical_cast<int>(e->right());
             }
           }
+          else if (isOpX<UN_MINUS>(e))
+          {
+            curVar = e->left();
+            curCoef = -1;
+          }
           else
           {
             curVar = e;

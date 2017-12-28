@@ -133,14 +133,14 @@ namespace ufo
         Bterm s;
         s.neg = true;
         s.var = getVarIndex(ex->arg(0), vars);
-        addDisjFilter(s, sample);
+        if (s.var >= 0) addDisjFilter(s, sample);
       }
       else if (bind::isBoolConst(ex))
       {
         Bterm s;
         s.neg = false;
         s.var = getVarIndex(ex, vars);
-        addDisjFilter(s, sample);
+        if (s.var >= 0) addDisjFilter(s, sample);
       }
     }
 

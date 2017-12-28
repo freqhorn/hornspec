@@ -55,11 +55,13 @@ namespace ufo
     return emptyIntersect(a, bv);
   }
 
+  // if at the end disjs is empty, then a == true
   inline static void getConj (Expr a, ExprSet &conjs)
   {
     if (isOpX<TRUE>(a)) return;
     if (isOpX<FALSE>(a)){
       conjs.clear();
+      conjs.insert(a);
       return;
     } else if (isOpX<AND>(a)){
       for (unsigned i = 0; i < a->arity(); i++){
@@ -70,11 +72,13 @@ namespace ufo
     }
   }
 
+  // if at the end disjs is empty, then a == false
   inline static void getDisj (Expr a, ExprSet &disjs)
   {
     if (isOpX<FALSE>(a)) return;
     if (isOpX<TRUE>(a)){
       disjs.clear();
+      disjs.insert(a);
       return;
     } else if (isOpX<OR>(a)){
       for (unsigned i = 0; i < a->arity(); i++){
@@ -182,6 +186,10 @@ namespace ufo
         return mk<MULT>(c, e->right());
       }
     }
+    else if (bind::isIntConst(e))
+      return mk<MULT>(mkTerm (mpz_class (-1), e->getFactory()), e);
+
+    // otherwise could be buggy...
     return mk<MULT>(mkTerm (mpq_class (-1), e->getFactory()), e);
   }
   
@@ -729,6 +737,8 @@ namespace ufo
     }
   };
   
+  inline static Expr simplifyBool (Expr exp);
+
   struct SimplifyBoolExpr
   {
     ExprFactory &efac;
@@ -738,7 +748,7 @@ namespace ufo
     Expr operator() (Expr exp)
     {
       // GF: to enhance
-      
+
       if (isOpX<IMPL>(exp))
       {
         if (isOpX<TRUE>(exp->right()))
@@ -752,19 +762,57 @@ namespace ufo
                  exp->right()));
       }
 
-      if (isOpX<OR>(exp)){
-        ExprSet dsjs;
-        getDisj(exp, dsjs);
-        for (auto & a : dsjs){
-          if (isOpX<EQ>(a) && a->left() == a->right()) return mk<TRUE>(efac);
-        }
-        return disjoin (dsjs, exp->getFactory());
+      if (isOpX<EQ>(exp))
+      {
+        if (isOpX<TRUE>(exp->right()))
+          return exp->left();
+
+        if (isOpX<TRUE>(exp->left()))
+          return exp->right();
+
+        if (isOpX<FALSE>(exp->right()))
+          return mk<NEG>(exp->left());
+
+        if (isOpX<FALSE>(exp->left()))
+          return mk<NEG>(exp->right());
       }
 
-      if (isOpX<AND>(exp)){
+      if (isOpX<OR>(exp))
+      {
+        ExprSet dsjs;
+        ExprSet newDsjs;
+        getDisj(exp, dsjs);
+        for (auto & a : dsjs){
+          if (isOpX<TRUE>(a))
+          {
+            return mk<TRUE>(efac);
+          }
+          if (isOpX<FALSE>(a))
+          {
+            continue;
+          }
+          newDsjs.insert(simplifyBool(a));
+        }
+        return disjoin (newDsjs, efac);
+      }
+
+      if (isOpX<AND>(exp))
+      {
         ExprSet cnjs;
+        ExprSet newCnjs;
         getConj(exp, cnjs);
-        return conjoin (cnjs, exp->getFactory());
+        for (auto & a : cnjs){
+          if (isOpX<FALSE>(a))
+          {
+            return mk<FALSE>(efac);
+          }
+          if (isOpX<TRUE>(a))
+          {
+            continue;
+          }
+          newCnjs.insert(simplifyBool(a));
+        }
+        return conjoin (newCnjs, efac);
       }
 
       return exp;
@@ -782,7 +830,131 @@ namespace ufo
     RW<SimplifyBoolExpr> rw(new SimplifyBoolExpr(exp->getFactory()));
     return dagVisit (rw, exp);
   }
-  
+
+  inline static void simplBoolReplCnjHlp(ExprVector& hardVars, ExprSet& cnjs, ExprVector& facts, ExprVector& repls)
+  {
+    bool toRestart;
+    ExprSet toInsert;
+
+    for (auto it = cnjs.begin(); it != cnjs.end(); )
+    {
+      if (isOpX<TRUE>(*it))
+      {
+        it = cnjs.erase(it);
+        continue;
+      }
+
+      Expr a = replaceAll(*it, facts, repls);
+
+      if (isOpX<IMPL>(a))
+      {
+        Expr lhs = simplifyBool(a->left());
+        bool isTrue = isOpX<TRUE>(lhs);
+        bool isFalse = isOpX<FALSE>(lhs);
+
+        if (isTrue) a = simplifyBool(a->right());
+        else if (isFalse) continue;
+      }
+
+      if (isOpX<EQ>(a))
+      {
+        // TODO: this could be symmetric
+
+        Expr lhs = simplifyBool(a->left());
+        bool isTrue = isOpX<TRUE>(lhs);
+        bool isFalse = isOpX<FALSE>(lhs);
+
+        if (isTrue) a = simplifyBool(a->right());
+        else if (isFalse)
+        {
+          a = simplifyBool(mk<NEG>(a->right()));
+        }
+      }
+
+      ExprSet splitted;
+      getConj(a, splitted);
+      toRestart = false;
+
+      for (auto & c : splitted)
+      {
+        if (bind::isBoolConst(c))
+        {
+          bool nothard = find(hardVars.begin(), hardVars.end(), c) == hardVars.end();
+          if (nothard)
+          {
+            toRestart = true;
+            facts.push_back(c);
+            repls.push_back(mk<TRUE>(a->getFactory()));
+            facts.push_back(mk<NEG>(c));
+            repls.push_back(mk<FALSE>(a->getFactory()));
+          }
+          else
+          {
+            toInsert.insert(c);
+          }
+        }
+        else if (isOpX<NEG>(c) && bind::isBoolConst(c->left()))
+        {
+          bool nothardLeft = find(hardVars.begin(), hardVars.end(), c->left()) == hardVars.end();
+          if (nothardLeft)
+          {
+            toRestart = true;
+            facts.push_back(c);
+            repls.push_back(mk<TRUE>(a->getFactory()));
+            facts.push_back(c->left());
+            repls.push_back(mk<FALSE>(a->getFactory()));
+          }
+          else
+          {
+            toInsert.insert(c);
+          }
+        }
+        else if (isOpX<EQ>(c))
+        {
+          if (bind::isIntConst(c->left())  &&
+              find(hardVars.begin(), hardVars.end(), c->left()) == hardVars.end())
+          {
+            toRestart = true;
+            facts.push_back(c->left());
+            repls.push_back(c->right());
+          }
+          else if (bind::isIntConst(c->right())  &&
+                   find(hardVars.begin(), hardVars.end(), c->right()) == hardVars.end())
+          {
+            toRestart = true;
+            facts.push_back(c->right());
+            repls.push_back(c->left());
+          }
+          else
+          {
+            toInsert.insert(c);
+          }
+        }
+        else
+        {
+          toInsert.insert(c);
+        }
+      }
+
+      it = cnjs.erase(it);
+      if (toRestart) break;
+    }
+
+    cnjs.insert(toInsert.begin(), toInsert.end());
+    if (toRestart)
+    {
+      simplBoolReplCnjHlp(hardVars, cnjs, facts, repls);
+    }
+  }
+
+  // simplification based on boolean replacements
+  inline static void simplBoolReplCnj(ExprVector& hardVars, ExprSet& cnjs)
+  {
+    ExprVector facts;
+    ExprVector repls;
+    simplBoolReplCnjHlp(hardVars, cnjs, facts, repls);
+  }
+
   inline static ExprSet minusSets(ExprSet& v1, ExprSet& v2){
     ExprSet v3;
     bool res;
@@ -885,13 +1057,15 @@ namespace ufo
       auto it = a->args_begin ();
       auto end = a->args_end ();
       getAddTerm(*it, terms);
-//      outs () <<"   [   " << *(*it) << "\n";
       ++it;
       for (; it != end; ++it)
       {
-//        outs () << *mk<UN_MINUS>(*it) << "   ]   \n";
         getAddTerm(arithmInverse(*it), terms);
       }
+    }
+    else if (isOpX<UN_MINUS>(a))
+    {
+      getAddTerm(arithmInverse(a->left()), terms);
     }
     else
     {
@@ -1794,6 +1968,93 @@ namespace ufo
     return isOpX<EQ>(exp);
   }
 
+  // very naive version, to extend
+  inline ExprSet orifyCmpConstraintsSet(ExprSet& es, int bnd = 10)
+  {
+    assert (es.size() > 0);
+    if (es.size() == 1)
+    {
+      ExprSet newDsjs;
+      getDisj(*es.begin(), newDsjs);
+      return newDsjs;
+    }
+
+    bool toDisj;
+    ExprFactory &efac = (*es.begin())->getFactory();
+    Expr lhs;
+    int lowerBnd = INT_MIN;
+    int upperBnd = INT_MAX;
+    for (auto & a : es)
+    {
+      toDisj = false;
+      if (!isOp<ComparissonOp>(a)) break;
+      if (isOpX<EQ>(a))
+      {
+        ExprSet newDsjs;
+        newDsjs.insert(a);
+        return newDsjs;
+      }
+
+      if (lhs == NULL) lhs = a->left();
+      else
+        if (0 != lexical_cast<string>(lhs).compare(lexical_cast<string>(a->left()))) break;
+
+      if (!isOpX<MPZ>(a->right())) break;
+
+      if (isOpX<GEQ>(a)) lowerBnd = max(lowerBnd, lexical_cast<int>(a->right()));
+      else if (isOpX<GT>(a)) lowerBnd = max(lowerBnd, lexical_cast<int>(a->right()) + 1);
+      else if (isOpX<LEQ>(a)) upperBnd = min(upperBnd, lexical_cast<int>(a->right()));
+      else if (isOpX<LT>(a)) upperBnd = min(upperBnd, lexical_cast<int>(a->right()) - 1);
+
+      toDisj = true;
+    }
+
+    ExprSet newDsjs;
+    if (toDisj)
+    {
+      for (int i = 0; i < min(bnd, upperBnd - lowerBnd); i++)
+      {
+        newDsjs.insert(mk<EQ>(lhs, mkTerm (mpz_class (lowerBnd + i), efac)));
+      }
+      if (upperBnd - lowerBnd > bnd)
+      {
+        newDsjs.insert(mk<AND>
+                (mk<GEQ>(lhs, mkTerm (mpz_class (lowerBnd + bnd), efac)),
+                 mk<LEQ>(lhs, mkTerm (mpz_class (upperBnd), efac))));
+      }
+    }
+    else
+    {
+      newDsjs.insert(conjoin(es, efac));
+    }
+    return newDsjs;
+  }
+
+  inline void getNondets (Expr e, std::map<Expr, ExprSet>& nondets)
+  {
+    ExprSet lin;
+    getConj(e, lin);
+    std::map<Expr, ExprSet> constraints;
+    for (auto & a : lin)
+    {
+      if (isOpX<GT>(a) || isOpX<LT>(a) || isOpX<GEQ>(a) || isOpX<LEQ>(a) || isOpX<ITE>(a) || isOpX<OR>(a))
+      {
+        ExprVector av;
+        filter (a, bind::IsConst (), inserter(av, av.begin()));
+        if (av.size() == 0 || av.size() > 1) continue;
+        // current limitation: only nondeterminism w.r.t. one variable; to extend
+
+        Expr a1 = (unfoldITE(a));
+        a1 = simplifyBool(a1);
+        getConj(a1, constraints[*av.begin()]);
+      }
+    }
+
+    for (auto & a : constraints){
+      nondets[a.first] = orifyCmpConstraintsSet(a.second);
+    }
+  }
+
   struct TransitionOverapprox
   {
     ExprVector& srcVars;
@@ -1813,6 +2074,32 @@ namespace ufo
       }
 
       return exp;
+    }
+  };
+
+  // opposite to TransitionOverapprox
+  struct TransitionMiner : public std::unary_function<Expr, VisitAction>
+  {
+    ExprVector& srcVars;
+    ExprVector& dstVars;
+    ExprSet& transitions;
+
+    TransitionMiner (ExprVector& _srcVars, ExprVector& _dstVars, ExprSet& _transitions):
+      srcVars(_srcVars), dstVars(_dstVars), transitions(_transitions) {};
+
+    VisitAction operator() (Expr exp)
+    {
+      if (isOp<ComparissonOp>(exp) && !containsOp<ITE>(exp))
+      {
+        ExprVector av;
+        filter (exp, bind::IsConst (), inserter(av, av.begin()));
+        if (!emptyIntersect(av, srcVars) && !emptyIntersect(av, dstVars))
+        {
+          transitions.insert(exp);
+        }
+        return VisitAction::skipKids ();
+      }
+      return VisitAction::doKids ();
     }
   };
 
@@ -1922,6 +2209,12 @@ namespace ufo
   {
     CondRetriever dr (conds);
     dagVisit (dr, exp);
+  }
+
+  inline void retrieveTransitions (Expr exp, ExprVector& srcVars, ExprVector& dstVars, ExprSet& transitions)
+  {
+    TransitionMiner trm (srcVars, dstVars, transitions);
+    dagVisit (trm, exp);
   }
 
   inline static Expr overapproxTransitions (Expr exp, ExprVector& srcVars, ExprVector& dstVars)
