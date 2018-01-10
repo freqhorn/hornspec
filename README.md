@@ -6,12 +6,12 @@ Satisfiability solver for constrained Horn clauses (CHC) based on the Expression
 News
 ========
 
-A more efficient release (FreqHorn-2) is now available. It features a two-stage process: 1) deterministic bootstrapping with itp-based proofs of bounded safety, 2) nondeterministic sampling with the inductive subset extraction and on-demand exploiting of counterexamples-to-induction. Check the usage message for more info.
+A more efficient release (FreqHorn-2) is now available. It features a two-stage process: 1) deterministic bootstrapping with interpolation-based proofs of bounded safety, 2) nondeterministic sampling with the inductive subset extraction and on-demand exploiting of counterexamples-to-induction. Find more details at the TACAS'18 <a href="http://www.cs.princeton.edu/~grigoryf/freqhorn_followup.pdf">paper</a>.
 
 Installation
 ============
 
-Compiles with gcc-5 (on Linux) and clang-700 (on Mac). Assumes preinstalled Gmp and Boost (libboost-system1.55-dev) packages.
+Compiles with gcc-5 (on Linux) and clang-900 (on Mac). Assumes preinstalled Svn, Gmp, and Boost (libboost-system1.55-dev) packages.
 
 * `cd aeval ; mkdir build ; cd build`
 * `cmake ../`
