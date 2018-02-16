@@ -11,7 +11,7 @@
 (rule (=> 
     (and 
         (itp x m n)
-        (< x1 n)
+        (< x n)
         (= x1 (ite (= m 1) (+ x 1) x))
     )
     (itp x1 m n)
