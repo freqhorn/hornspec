@@ -1,0 +1,32 @@
+---
+- name: copy benchmark-others.py to C:\
+  win_copy:
+    src: files/benchmark-others.py
+    dest: C:\
+
+- name: install packages to benchmark-others.py
+  win_shell: "{{ cygwin_root }}\\bin\\bash.exe --login -c \"{{ item }}\""
+  with_items:
+    - pip2 install subprocess32
+  
+- name: delete MCMC benchmarks
+  win_file:
+    path: C:\bench_horn_mcmc
+    state: absent
+
+- name: copy MCMC benchmarks
+  win_copy:
+    src: ../../../../../../bench_horn_mcmc/
+    dest: C:\bench_horn_mcmc
+    force: yes
+
+- name: delete ICE benchmarks
+  win_file:
+    path: C:\bench_horn_ice
+    state: absent
+
+- name: copy ICE benchmarks
+  win_copy:
+    src: ../../../../../../bench_horn_ice/
+    dest: C:\bench_horn_ice
+    force: yes

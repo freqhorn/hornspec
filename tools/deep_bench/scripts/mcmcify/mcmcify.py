@@ -21,7 +21,9 @@ TOK_MAP = {
     '<=': 'LE',
     '<': 'LT',
     '+': 'PLUS',
-    '-': 'MINUS'
+    '-': 'MINUS',
+    '*': 'MUL',
+    'mod': 'MOD'
 }
 
 
@@ -189,7 +191,7 @@ def translate(chctask, xmlfo, configfo):
     # Guess invariant name
     # TODO: Should be only one rel with any params
     inv_name = None
-    for c in ['itp', 'inv']:
+    for c in ['itp', 'inv', 'itp1']:
         if deephas(chctask.rels, c):
             inv_name = c
     assert inv_name
@@ -241,10 +243,9 @@ def translate(chctask, xmlfo, configfo):
     print(prettify_xml(outtree.getroot()), file=xmlfo)
 
     # Build config
-    # TODO: Re-read paper; figure out what these hyperparams mean:
-    #       http://theory.stanford.edu/~aiken/publications/papers/cav14.pdf
     all_ints = set(int(x.text) for x in outtree.iter('INT'))
     all_ints = all_ints.union(set(-x for x in all_ints))
+    all_ints = all_ints.union(set([-1, 0, 1]))
     print("DISJUNCTS", file=configfo)
     print("10", file=configfo)
     print("CONJUNCTS", file=configfo)
