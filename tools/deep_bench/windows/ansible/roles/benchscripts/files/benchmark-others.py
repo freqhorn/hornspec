@@ -12,7 +12,7 @@ import traceback
 from collections import defaultdict
 
 
-TEN_MINS = 10*60  # in seconds
+ONE_MIN = 1 * 60  # in seconds
 TOTAL_TIME_RE = re.compile(r'\s*[tT]otal [tT]ime:?\s+([\.0-9]*)\s*')
 BOOGIE_RESULTS_RE = re.compile(r'\s*Boogie program verifier finished with [^0]\d* verified, 0 errors.*')
 
@@ -257,7 +257,8 @@ def main():
                         if args.verbose:
                             print("Running %s on %s" % (n, name_only(b)))
                         try:
-                            fn_result = fn(b, args.logdir, verbose=args.verbose, timeout=TEN_MINS)
+                            fn_result = fn(b, args.logdir, verbose=args.verbose,
+                                           timeout=ONE_MIN)
                         except subprocess32.CalledProcessError:
                             traceback.print_exc()
                             break

@@ -12,6 +12,7 @@ import traceback
 from itertools import product, izip
 
 
+ONE_MIN = 1 * 60  # in seconds
 SUCCESS_ITERS_RE = re.compile(r'\s*\-+>\s+Success after (.*) iterations\s*')
 ELAPSED_RE = re.compile(r'\s*elapsed: (.*)s\s*')
 PROCS_TO_TRY = [1, 4]
@@ -30,7 +31,7 @@ def name_only(path):
     return os.path.splitext(os.path.split(path)[1])[0].lower()
 
 
-def run_deephorn(example_path, proc_cnt, aggprune, logs_dir_path, timeout=600):
+def run_deephorn(example_path, proc_cnt, aggprune, logs_dir_path, timeout=ONE_MIN):
     aggprune_arg = "0"
     if aggprune:
         aggprune_arg = "1"

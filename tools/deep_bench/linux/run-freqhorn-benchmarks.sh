@@ -57,7 +57,7 @@ BENCH_MPIRUN=/usr/bin/mpirun parallel \
   "./benchmark-freqhorn.py -v -i 1 --logdir /home/ubuntu/out/benchlogs -o /home/ubuntu/out/ --hyper {2} /home/ubuntu/aeval/bench_horn/{1}.smt2 &> /home/ubuntu/out/std.log ; " \
   "cd /home/ubuntu ; " \
   "tar -zcf out-{1}-{2}-i{3}.tar.gz out/ ;" \
-  ::: 2,agg_on 2,agg_off 5,agg_on 5,agg_off ::: {0..9}
+  ::: 2,agg_on 2,agg_off 5,agg_on 5,agg_off ::: {0..2}
 
 # Remove the disabling of StrictHostKeyChecking
 mv ~/.ssh/config.backup ~/.ssh/config

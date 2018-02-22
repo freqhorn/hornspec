@@ -25,7 +25,7 @@ find ../../../bench_horn/*.smt2 -exec basename {} .smt2 \; | parallel \
   "MCMC_ROOT=/cygdrive/c/MCMC ICE_ROOT=/cygdrive/c/ICE MCMC_BENCH=/cygdrive/c/bench_horn_mcmc ICE_BENCH=/cygdrive/c/bench_horn_ice /cygdrive/c/benchmark-others.py --logdir out/ -o out/times.json --{2} 1 {1} &> out/std.log ; " \
   "cd ~ ; " \
   "tar -zcf out-{1}-{2}-i{3}.tar.gz out/ ;" \
-  ::: mcmc ice z3 ::: {0..9}
+  ::: mcmc ice z3 ::: {0..2}
 
 # Remove the disabling of StrictHostKeyChecking
 mv ~/.ssh/config.backup ~/.ssh/config
