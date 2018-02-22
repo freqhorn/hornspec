@@ -8,7 +8,7 @@
 
 (declare-rel fail ())
 
-(rule (=> (and (>= n 1) (>= k n) (= j 0)) (itp j k n)))
+(rule (=> (and (>= n 1) (> k n) (= j 0)) (itp j k n)))
 
 (rule (=> 
     (and 
