@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 from __future__ import print_function
 import os
 from tabulate import tabulate
@@ -22,21 +22,23 @@ def plausible_root(path):
 
 
 def list_benchmarks(path):
-    tail = os.path.split(path)[1].lower()
+    dirname = os.path.split(path)[1].lower()
     for entry in os.listdir(path):
-        if tail == STD_SMT2_BENCH_DIR:
+        if entry[0] == '.':
+            continue
+        if dirname == STD_SMT2_BENCH_DIR:
             name, ext = os.path.splitext(entry)
             if ext == '.smt2':
                 yield name
-        elif tail == STD_ICE_BENCH_DIR:
+        elif dirname == STD_ICE_BENCH_DIR:
             name, ext = os.path.splitext(entry)
             if ext == '.bpl':
                 yield name
-        elif tail == STD_MCMC_BENCH_DIR:
+        elif dirname == STD_MCMC_BENCH_DIR:
             if os.path.isdir(path):
                 yield entry
         else:
-            raise ValueError("%s is of unrecognized typed" % tail)
+            raise ValueError("%s is of unrecognized typed" % dirname)
 
 
 def main():
@@ -53,7 +55,7 @@ def main():
     
     sorted_keys = list(sorted(found.keys()))
     table = [[b] + [u'\u2713' if b in found[a] else '' for a in sorted_keys]
-             for b in all_benchs]
+             for b in sorted(all_benchs)]
     print(tabulate(table, headers=[]+sorted_keys))
 
 
