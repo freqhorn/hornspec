@@ -1,6 +1,7 @@
 #!/usr/bin/env python2
 from __future__ import print_function
 import os
+import sys
 from tabulate import tabulate
 
 
@@ -52,9 +53,13 @@ def main():
     found = dict((dirname, set(list_benchmarks(os.path.join(root, dirname))))
                  for dirname in STD_ALL)
     all_benchs = set.union(*found.values())
+
+    check = u'\u2713'
+    if "--ascii" in sys.argv:
+        check = 'Y'
     
     sorted_keys = list(sorted(found.keys()))
-    table = [[b] + [u'\u2713' if b in found[a] else '' for a in sorted_keys]
+    table = [[b] + [check if b in found[a] else '' for a in sorted_keys]
              for b in sorted(all_benchs)]
     print(tabulate(table, headers=[]+sorted_keys))
 
