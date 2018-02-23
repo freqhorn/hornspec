@@ -10,6 +10,10 @@ variable "instance_type" {
   default = "m4.xlarge"
 }
 
+variable "freqhorn_ami" {
+  default = ""
+}
+
 provider "aws" {}
 
 data "http" "ip" {
@@ -174,6 +178,16 @@ data "aws_ami" "windows2012" {
   }
 }
 
+data "aws_ami" "freqhorn" {
+  most_recent = true
+  owners      = ["self"]
+
+  filter {
+    name   = "name"
+    values = ["FreqHorn-Win-Benchmark-Image"]
+  }
+}
+
 #
 # Instances
 #
@@ -195,7 +209,7 @@ resource "aws_spot_fleet_request" "fleet_req" {
 
   launch_specification {
     instance_type               = "${var.instance_type}"
-    ami                         = "${data.aws_ami.windows2012.id}"
+    ami                         = "${var.freqhorn_ami != "" ? var.freqhorn_ami : data.aws_ami.windows2012.id}"
     subnet_id                   = "${aws_subnet.main.id}"
     vpc_security_group_ids      = ["${aws_security_group.secgrp.id}"]
     associate_public_ip_address = true
