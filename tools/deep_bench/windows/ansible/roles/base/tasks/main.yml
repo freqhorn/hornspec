@@ -30,7 +30,7 @@
     - visualstudio2017-workload-vctools
   retries: 1
   register: chocolatey_pkgs
-  until: chocolatey_pkgs|succeeded
+  until: chocolatey_pkgs is succeeded
   delay: 2
 
 - name: reboot the machine

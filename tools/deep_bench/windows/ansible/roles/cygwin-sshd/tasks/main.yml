@@ -9,7 +9,7 @@
   become: yes
   retries: 1
   register: ssh_host_config
-  until: ssh_host_config|succeeded
+  until: ssh_host_config is succeeded
   delay: 2
   notify: restart sshd
 

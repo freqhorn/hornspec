@@ -19,6 +19,13 @@
   win_command: C:\tools\cygwin\bin\bash.exe --login -c "git clone --branch spacer3 https://bitbucket.org/spacer/code.git spacer"
   when: not spacer_folder_info.stat.exists
 
+- name: add smmintrin.h include to hwf.cpp (to compile with VS 2017)
+  win_lineinfile:
+    path: C:\tools\cygwin\home\{{ ansible_user }}\spacer\src\util\hwf.cpp
+    line: "#include<smmintrin.h>"
+    regexp: '^\s*#include\s*\<smmintrin(\.h(pp)?)?\>'
+    insertafter: '^\s*#include'
+
 - name: build Spacer
   win_shell: '"C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\Common7\Tools\VsDevCmd.bat" && cd C:\tools\cygwin\home\{{ ansible_user }}\spacer && python scripts\mk_make.py && cd build && nmake'
   args:

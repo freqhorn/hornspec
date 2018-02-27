@@ -16,8 +16,10 @@
 
 .mypy_cache
 .vscode
+.sync
 .tags
 .tags1
+.ipynb_checkpoints
 terraform.tfstate
 terraform.tfstate.backup*
 tools/deep_bench/windows/files/ice.zip
