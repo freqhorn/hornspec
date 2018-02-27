@@ -10,7 +10,7 @@ variable "instance_type" {
   default = "m4.xlarge"
 }
 
-variable "freqhorn_ami" {
+variable "freqhorn_windows_ami" {
   default = ""
 }
 
@@ -165,7 +165,7 @@ EOF
 }
 
 #
-# Look up AMI
+# Default AMI
 #
 
 data "aws_ami" "windows2012" {
@@ -175,16 +175,6 @@ data "aws_ami" "windows2012" {
   filter {
     name   = "name"
     values = ["Windows_Server-2012-R2_RTM-English-64Bit-Base-*"]
-  }
-}
-
-data "aws_ami" "freqhorn" {
-  most_recent = true
-  owners      = ["self"]
-
-  filter {
-    name   = "name"
-    values = ["FreqHorn-Win-Benchmark-Image"]
   }
 }
 
@@ -209,7 +199,7 @@ resource "aws_spot_fleet_request" "fleet_req" {
 
   launch_specification {
     instance_type               = "${var.instance_type}"
-    ami                         = "${var.freqhorn_ami != "" ? var.freqhorn_ami : data.aws_ami.windows2012.id}"
+    ami                         = "${var.freqhorn_windows_ami != "" ? var.freqhorn_windows_ami : data.aws_ami.windows2012.id}"
     subnet_id                   = "${aws_subnet.main.id}"
     vpc_security_group_ids      = ["${aws_security_group.secgrp.id}"]
     associate_public_ip_address = true
@@ -220,6 +210,7 @@ resource "aws_spot_fleet_request" "fleet_req" {
 
     tags {
       Project = "FreqHorn"
+      FreqHornPlatform = "Windows"
     }
   }
 }

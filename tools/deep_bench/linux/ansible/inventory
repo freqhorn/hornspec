@@ -1,0 +1,9 @@
+[linux]
+
+[linux:vars]
+ansible_user=ubuntu
+
+[linux:children]
+tag_FreqHornPlatform_Linux
+
+[tag_FreqHornPlatform_Linux]

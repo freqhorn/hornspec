@@ -1,0 +1,114 @@
+---
+- hosts: linux
+  gather_facts: no
+  pre_tasks:
+    - name: install Python 2 for Ansible
+      become: yes
+      raw: test -e /usr/bin/python || (apt update && apt install -y python-simplejson)
+      register: initpy
+      changed_when: initpy.stdout
+    - name: gather facts
+      setup:
+  tasks:
+    - name: remove gcc, g++, llvm/clang 3.6 & 3.7
+      become: yes
+      apt:
+        name: "{{ item }}"
+        state: absent
+        autoremove: yes
+      with_items:
+        - gcc
+        - g++
+        - clang-3.6
+        - clang-3.7
+        - llvm-3.6
+        - llvm-3.6-dev
+        - llvm-3.7
+        - llvm-3.7-dev
+
+    - name: install basic packages
+      become: yes
+      apt:
+        name: "{{ item }}"
+        state: latest
+        cache_valid_time: 600
+        autoremove: yes
+      with_items:
+        - clang-3.8
+        - llvm-3.8
+        - llvm-3.8-dev
+        - libboost-dev
+        - libboost-system-dev
+        - libboost-mpi-dev
+        - openmpi-common
+        - openmpi-bin
+        - subversion
+        - python-subprocess32
+        - libgmp-dev
+        - libomp-dev
+        - cmake
+        - cmake-data
+        - htop
+        - awscli
+        - rsync
+
+    - name: update 'cc' alternative to use clang
+      become: yes
+      alternatives:
+        name: cc
+        path: /usr/bin/clang-3.8
+
+    - name: update 'c++' alternative to use clang
+      become: yes
+      alternatives:
+        name: c++
+        path: /usr/bin/clang++-3.8
+        link: /usr/bin/c++
+
+    - name: sync entire source tree
+      synchronize:
+        src: ../../../../../
+        dest: /home/ubuntu/aeval
+        mode: push
+        archive: no
+        checksum: yes
+        recursive: yes
+        perms: yes
+        owner: no
+        group: no
+        rsync_opts:
+          - "--exclude=build"
+      register: sync_info
+    
+    # - name: destroy 'build' directory
+    #   file:
+    #     path: /home/ubuntu/aeval/build
+    #     state: absent
+    #   when: sync_info.changed
+
+    # - name: hack CMakeLists.txt so that it finds LLVM 
+    #   lineinfile:
+    #     path: /home/ubuntu/aeval/CMakeLists.txt
+    #     line: "find_package(LLVM REQUIRED CONFIG)"
+    #     insertbefore: BOF
+
+    - file:
+        path: /home/ubuntu/aeval/build
+        state: directory
+        mode: 0700
+
+    - name: Check if a `freqhorn` exists
+      stat:
+        path: /home/ubuntu/aeval/build/tools/deep/freqhorn
+      register: freqhorn_stat
+
+    - name: build FreqHorn
+      shell: |
+        cd build &&
+        cmake .. &&
+        make &&
+        make
+      args:
+        chdir: /home/ubuntu/aeval
+        creates: /home/ubuntu/aeval/build/tools/deep/freqhorn
+      when: sync_info.changed or freqhorn_stat.stat.exists == False

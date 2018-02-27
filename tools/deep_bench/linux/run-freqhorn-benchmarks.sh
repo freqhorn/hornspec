@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 
-set -x
-
-cd terraform || exit 1
-terraform apply || exit 1
-cd ..
-
-echo ""
-echo "  Wait for the cluster to be up and running (not initializing)."
-echo "  Then hit Enter to continue."
-echo ""
-read
+set -e
 
 # Get IP addresses
 cd terraform || exit 1
@@ -42,22 +32,20 @@ cp ~/.ssh/config ~/.ssh/config.backup
 # TODO: rsync & re-build (instead of prior update pass)
 
 # Run the jobs
-find ../../bench_horn/*.smt2 -exec basename {} .smt2 \; | \
-BENCH_MPIRUN=/usr/bin/mpirun parallel \
+./all-jobs.py z3 | parallel \
   --resume-failed \
   --joblog ./clusterjobs.log \
-  --return "out-{1}-{2}-i{3}.tar.gz" \
+  --return "out-{2}-{3}--{4}--i{5}.tar.gz" \
   --cleanup \
+  --colsep ':::' \
   -a - \
-  --env BENCH_MPIRUN \
   --sshlogin $HOSTS \
   "rm -rf out && " \
   "mkdir out && " \
-  "cd /home/ubuntu/aeval/tools/deep_bench && " \
-  "./benchmark-freqhorn.py -v -i 1 --logdir /home/ubuntu/out/benchlogs -o /home/ubuntu/out/ --hyper {2} /home/ubuntu/aeval/bench_horn/{1}.smt2 &> /home/ubuntu/out/std.log ; " \
+  "cd /home/ubuntu/aeval/tools/deep_bench/scripts && " \
+  "FREQHORN_ROOT=/home/ubuntu/aeval FREQHORN_BENCH=/home/ubuntu/aeval/bench_horn ./benchmark-supervisor.py -o /home/ubuntu/out {1} {4} {3} {2} &> /home/ubuntu/out/supervisor.std.log ; " \
   "cd /home/ubuntu ; " \
-  "tar -zcf out-{1}-{2}-i{3}.tar.gz out/ ;" \
-  ::: 2,agg_on 2,agg_off 5,agg_on 5,agg_off ::: {0..2}
+  "tar -zcf out-{2}-{3}--{4}--i{5}.tar.gz out/ ;"
 
 # Remove the disabling of StrictHostKeyChecking
 mv ~/.ssh/config.backup ~/.ssh/config

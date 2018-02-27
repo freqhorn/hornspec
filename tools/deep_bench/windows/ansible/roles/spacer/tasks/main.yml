@@ -15,8 +15,8 @@
     path: C:\tools\cygwin\home\{{ ansible_user }}\spacer\build\z3.exe
   register: spacer_bin_info
 
-- name: git pull spacer
-  win_command: C:\tools\cygwin\bin\bash.exe --login -c "git clone --branch spacer https://bitbucket.org/arieg/z3.git spacer"
+- name: git pull spacer3
+  win_command: C:\tools\cygwin\bin\bash.exe --login -c "git clone --branch spacer3 https://bitbucket.org/spacer/code.git spacer"
   when: not spacer_folder_info.stat.exists
 
 - name: build Spacer

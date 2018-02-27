@@ -1,9 +1,20 @@
 variable "cluster_size" {
-  type = "int"
-  default = 20
+  default = "20"
+}
+
+variable "instance_type" {
+  default = "m4.xlarge"
+}
+
+variable "freqhorn_linux_ami" {
+  default = ""
 }
 
 provider "aws" {}
+
+data "http" "ip" {
+  url = "http://icanhazip.com"
+}
 
 #
 # Simple VPC for instance
@@ -12,18 +23,17 @@ resource "aws_vpc" "main" {
   cidr_block = "192.168.0.0/16"
 
   tags {
-    Name = "BenchmarkFreqHorn-VPC"
+    Name = "BenchmarkFreqHorn-Linux-VPC"
   }
 }
 
 resource "aws_subnet" "main" {
   vpc_id                  = "${aws_vpc.main.id}"
-  availability_zone       = "us-east-1e"
   cidr_block              = "192.168.1.0/24"
   map_public_ip_on_launch = true
 
   tags {
-    Name = "BenchmarkFreqHorn-Subnet"
+    Name = "BenchmarkFreqHorn-Linux-Subnet"
   }
 }
 
@@ -31,7 +41,7 @@ resource "aws_internet_gateway" "igw" {
   vpc_id = "${aws_vpc.main.id}"
 
   tags {
-    Name = "BenchmarkFreqHorn-InternetGateway"
+    Name = "BenchmarkFreqHorn-Linux-InternetGateway"
   }
 }
 
@@ -46,11 +56,15 @@ resource "aws_security_group" "secgrp" {
   description = "Allow inbound SSH"
   vpc_id      = "${aws_vpc.main.id}"
 
+  # SSH from local IP
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port = 22
+    to_port   = 22
+    protocol  = "tcp"
+
+    cidr_blocks = [
+      "${chomp(data.http.ip.body)}/32",
+    ]
   }
 
   egress {
@@ -124,15 +138,21 @@ EOF
 }
 
 #
-# Find the AMI we built with ../packer/worker.json
+# Default AMI
 #
-data "aws_ami" "worker" {
+
+data "aws_ami" "ubuntu16" {
   most_recent = true
-  owners      = ["self"]
+  owners      = ["099720109477"]
 
   filter {
-    name   = "tag:Project"
-    values = ["FreqHorn"]
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-xenial-16.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
   }
 }
 
@@ -144,21 +164,23 @@ resource "aws_spot_fleet_request" "fleet_req" {
   iam_fleet_role = "${aws_iam_role.iam_fleet_role.arn}"
 
   spot_price                          = "0.10"
-  target_capacity                     = "${vars.cluster_size}"
+  target_capacity                     = "${var.cluster_size}"
   terminate_instances_with_expiration = true
 
   launch_specification {
-    instance_type               = "m4.xlarge"
-    ami                         = "${data.aws_ami.worker.id}"
+    instance_type               = "${var.instance_type}"
+    ami                         = "${var.freqhorn_linux_ami != "" ? var.freqhorn_linux_ami : data.aws_ami.ubuntu16.id}"
     key_name                    = "deephornec2"
     subnet_id                   = "${aws_subnet.main.id}"
     vpc_security_group_ids      = ["${aws_security_group.secgrp.id}"]
     associate_public_ip_address = true
 
-    placement_tenancy           = "dedicated"
+    # non-dedicated because m4.xlarge doesn't supported that tenancy mode
+    # placement_tenancy = "dedicated"
 
     tags {
-      Project = "FreqHorn"
+      Project          = "FreqHorn"
+      FreqHornPlatform = "Linux"
     }
   }
 }
