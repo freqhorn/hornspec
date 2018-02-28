@@ -3,14 +3,9 @@
 set -e
 
 # Get IP addresses
-cd terraform || exit 1
-terraform refresh || exit 1
-SFR_ID=`jq -r ".modules[0].resources.\"aws_spot_fleet_request.fleet_req\".primary.id" terraform.tfstate`
-INSTANCE_IDS=`aws ec2 describe-spot-fleet-instances --spot-fleet-request-id $SFR_ID | jq -r ".ActiveInstances[]|
-select(.InstanceHealth==\"healthy\")|.InstanceId" | awk '{$1=$1};1'`
-HOSTS=`aws ec2 describe-instances --instance-ids $INSTANCE_IDS | jq -r '.Reservations[0].Instances[].PublicIpAddress' | sed -e 's/^/1\/ubuntu@/' | xargs echo -n | tr ' ' ','`
+# HOSTS=`../scripts/ec2-inv.py --list | jq -r .tag_FreqHornPlatform_Linux\[\] | sed -e 's/^/1\/ubuntu@/' | xargs echo -n | tr '\n' ','`
+HOSTS=`../scripts/ec2-inv.py --list | jq -r .tag_FreqHornPlatform_Linux\[\] | sed -e 's/^/1\/ssh -i ~\/.ssh\/deephornec2.pem ubuntu@/' | tr '\n' ','`
 echo $HOSTS
-cd ..
 
 # Disable StrictHostKeyChecking temporarily. (So hacky.)
 touch ~/.ssh/config
@@ -39,7 +34,7 @@ cp ~/.ssh/config ~/.ssh/config.backup
   --cleanup \
   --colsep ':::' \
   -a - \
-  --sshlogin $HOSTS \
+  --sshlogin "$HOSTS" \
   "rm -rf out && " \
   "mkdir out && " \
   "cd /home/ubuntu/aeval/tools/deep_bench/scripts && " \

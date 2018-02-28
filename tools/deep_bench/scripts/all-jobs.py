@@ -28,13 +28,21 @@ def smt2_names():
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("-b", "--bench", type=str,
+                        help="comma-sep.'d list of benchmarks to output")
     parser.add_argument("ALGOS", type=str, nargs='+')
     args = parser.parse_args()
+
+    bench_mask = set()
+    if args.bench:
+        bench_mask = set(args.bench.lower().split(','))
 
     max_iters = max(algo_confs[x.lower()].iters for x in args.ALGOS)
 
     for i in range(max_iters):
         for bench in smt2_names():
+            if len(bench_mask) and bench.lower() not in bench_mask:
+                continue
             for algo in args.ALGOS:
                 aconf = algo_confs[algo]
                 if i >= aconf.iters:

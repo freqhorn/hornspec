@@ -25,6 +25,7 @@ class simple_utc(tzinfo):
 ONE_MIN = 1 * 60  # in seconds
 TOTAL_TIME_RE = re.compile(r'\s*[tT]otal [tT]ime:?\s+([\.0-9]*)\s*')
 BOOGIE_RESULTS_RE = re.compile(r'\s*Boogie program verifier finished with [^0]\d* verified, 0 errors.*')
+FREQHORN_ITER_LIMIT_RE = re.compile(r'\s*No success after (\d+) iterations\s*')
 FREQHORN_V1_RE = re.compile(r'\s*\-+>\s*Success after (\d+) iterations\s*')
 FREQHORN_V2_BOOT_RE = re.compile(r'\s*Success after (.+?\s+)?bootstrapping\s*')
 FREQHORN_V2_SAMPLING_RE = re.compile(r'\s*Success after (.+?\s+)?sampling\s*')
@@ -32,9 +33,13 @@ FREQHORN_V2_SAMPLING_RE = re.compile(r'\s*Success after (.+?\s+)?sampling\s*')
 RunResult = namedtuple('RunResult', 'reported_time proc_time iters success_kind')
 
 
-# TODO: Should actually check for explicit success, not just total time report
 class NoSuccessException(Exception):
     pass
+
+class IterLimitHitException(NoSuccessException):
+    def __init__(self, msg, iters=None):
+        super(IterLimitHitException, self).__init__(msg)
+        self.iters = iters
 
 
 def win_path(orig):
@@ -113,7 +118,7 @@ def run_ice(bench_name, logfile, hyper, verbose=False, timeout=None):
             raise Exception("couldn't find time")
         return RunResult(t, proc_time=end-start, iters=None, success_kind=None)
     else:
-        raise NoSuccessException("couldn't find '0 errors'")
+        raise Exception("couldn't find '0 errors'")
 
 
 def run_mcmc(bench_name, logfile, hyper, verbose=False, timeout=None):
@@ -136,7 +141,7 @@ def run_mcmc(bench_name, logfile, hyper, verbose=False, timeout=None):
         m = TOTAL_TIME_RE.match(line)
         if m:
             return RunResult(float(m.group(1)), end-start, None, None)
-    raise NoSuccessException("couldn't find 'Total time'")
+    raise Exception("couldn't find 'Total time'")
 
 
 def run_z3(bench_name, logfile, hyper, verbose=False, timeout=None):
@@ -167,7 +172,7 @@ def run_z3(bench_name, logfile, hyper, verbose=False, timeout=None):
     end = time.time()
 
     is_unsat, found_result = False, False
-    for line in output.splitlines()[-20:]:
+    for line in output.splitlines()[:10]:
         if verbose:
             print(" ---", line)
         split_line = line.lower().split()
@@ -178,10 +183,10 @@ def run_z3(bench_name, logfile, hyper, verbose=False, timeout=None):
             assert not found_result
             is_unsat, found_result = True, True
     if not found_result:
-        raise NoSuccessException("couldn't find 'sat' or 'unsat'")
+        raise Exception("couldn't find 'sat' or 'unsat'")
     if is_unsat:
         return RunResult(end-start, end-start, None, None)
-    raise NoSuccessException("was 'sat'")
+    raise Exception("was 'sat'")
 
 
 def run_freqhorn(bench_name, logfile, hyper, verbose=False, timeout=None):
@@ -200,27 +205,35 @@ def run_freqhorn(bench_name, logfile, hyper, verbose=False, timeout=None):
                                   logfile=logfile)
     end = time.time()
 
-    success, iters, v2_kind = False, None, None
-    for line in output.splitlines()[-20:]:
+    result_found, success, iters, v2_kind = False, None, None, None
+    for line in output.splitlines():
         if verbose:
             print(line)
-        if '--v1' in hyp_args:
+        iter_limit_m = FREQHORN_ITER_LIMIT_RE.match(line)
+        if iter_limit_m:
+            assert not result_found
+            result_found, success = True, False
+            iters = int(iter_limit_m.group(1))
+        elif '--v1' in hyp_args:
             m = FREQHORN_V1_RE.match(line)
             if m:
-                assert not success
-                success, iters = True, int(m.group(1))
+                assert not result_found
+                result_found, success, iters = True, True, int(m.group(1))
         else:
             boot_m = FREQHORN_V2_BOOT_RE.match(line)
             samp_m = FREQHORN_V2_SAMPLING_RE.match(line)
             if boot_m:
-                assert not success
-                success, v2_kind = True, 'bootstrapping'
+                assert not result_found
+                result_found, success, v2_kind = True, True, 'bootstrapping'
             elif samp_m:
-                assert not success
-                success, v2_kind = True, 'sampling'
+                assert not result_found
+                result_found, success, v2_kind = True, True, 'sampling'
     
+    if not result_found:
+        raise Exception("didn't find result in output")
     if not success:
-        raise NoSuccessException("didn't find success token in output")
+        raise IterLimitHitException("no success after %d iterations" % iters,
+                                    iters=iters)
     return RunResult(None, end-start, iters, v2_kind)
 
 
@@ -278,13 +291,23 @@ def main():
             print("Timed out")
         result_obj['outcome'] = 'timeout'
         json.dump(result_obj, resultfile)
+    except IterLimitHitException as e:
+        if args.verbose:
+            print("Iteration limit hit")
+        result_obj['outcome'] = 'iterLimitHit'
+        result_obj['iters'] = e.iters
+        json.dump(result_obj, resultfile)
     except KeyboardInterrupt:
         return 0
     else:
         result_obj['outcome'] = 'success'
+        result_obj['processTime'] = run_result.proc_time
         if run_result.reported_time:
             result_obj['reportedTime'] = run_result.reported_time
-        result_obj['processTime'] = run_result.proc_time
+        if run_result.success_kind:
+            result_obj['successKind'] = run_result.success_kind
+        if run_result.iters is not None:
+            result_obj['iters'] = run_result.iters
         json.dump(result_obj, resultfile)
     finally:
         resultfile.close()
