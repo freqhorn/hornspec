@@ -92,7 +92,13 @@ def run_ice(bench_name, logfile, hyper, verbose=False, timeout=None):
     assert os.path.isfile(cmd)
 
     for cachepath in glob.glob(example_path + ".*"):
+        if verbose:
+            print("removing %s" % cachepath)
         os.remove(cachepath)
+
+    # This was built with msys. It needs the relevant DLLs in PATH to work.
+    new_env = dict(os.environ)
+    new_env['PATH'] = "/cygdrive/c/tools/msys64/mingw64/bin:" + os.environ["PATH"]
 
     start = time.time()
     output = subproc_check_output([cmd, "-nologo", "-noinfer", "-contractInfer",
@@ -100,7 +106,8 @@ def run_ice(bench_name, logfile, hyper, verbose=False, timeout=None):
                                    win_path(example_path)],
                                   timeout=timeout,
                                   cwd=os.path.join(root, "Boogie", "Binaries"),
-                                  logfile=logfile)
+                                  logfile=logfile,
+                                  env=new_env)
     end = time.time()
 
     success, t = False, 0
@@ -247,7 +254,7 @@ def main():
                         help="be noisier about what's going on")
     parser.add_argument("--hyper", type=str,
                         help="a hyperparameter string for the algo.")
-    args = parser.parse_args()
+    args = parser.parse_args(args=[x for x in sys.argv[1:] if len(x)])
 
     # Make the out/ directory
     outdir = args.outdir
@@ -271,10 +278,11 @@ def main():
     # Begin building the result.json object
     result_obj = {
         'algorithm': args.ALGO.upper(),
-        'hyperparams': '',
         'startDate': datetime.utcnow().replace(tzinfo=simple_utc()).isoformat(),
         'benchmarkName': args.BENCHNAME
     }
+    if args.hyper:
+        result_obj['hyperparams'] = args.hyper
 
     # Run the benchmark
     logpath = os.path.join(outdir, "out.log")

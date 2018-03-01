@@ -1,5 +1,5 @@
 ---
-- hosts: windows
+- hosts: all
   roles:
     - base
     - cygwin-sshd

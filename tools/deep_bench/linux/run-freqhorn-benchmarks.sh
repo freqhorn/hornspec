@@ -27,7 +27,7 @@ cp ~/.ssh/config ~/.ssh/config.backup
 # TODO: rsync & re-build (instead of prior update pass)
 
 # Run the jobs
-./all-jobs.py z3 | parallel \
+../scripts/all-jobs.py freqhorn | parallel \
   --resume-failed \
   --joblog ./clusterjobs.log \
   --return "out-{2}-{3}--{4}--i{5}.tar.gz" \

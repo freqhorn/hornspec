@@ -208,6 +208,11 @@ resource "aws_spot_fleet_request" "fleet_req" {
     # non-dedicated because m4.xlarge doesn't supported that tenancy mode
     # placement_tenancy = "dedicated"
 
+    root_block_device {
+      volume_size = "40"
+      volume_type = "gp2"
+    }
+
     tags {
       Project = "FreqHorn"
       FreqHornPlatform = "Windows"

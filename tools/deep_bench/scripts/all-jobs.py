@@ -15,7 +15,7 @@ algo_confs = {
     'z3': AlgoConf(3, ['spacerhyp1', 'spacerhyp2']),
     'freqhorn': AlgoConf(3, ['v1', 'v1-eps', 'v1-eps-freqs',
                              'v1-eps-freqs-aggp', 'aggp', 'aggp-itp3',
-                             'freqs-aggp', 'freqs-aggp'])
+                             'freqs-aggp', 'freqs-aggp-itp3'])
 }
 
 
@@ -49,8 +49,9 @@ def main():
                     continue
                 for hyper in aconf.hypers:
                     hypflag = "" if hyper is None else "--hyper"
+                    hypval = "" if hyper is None else hyper
                     out = "%s ::: %s ::: %s ::: %s ::: %d" % \
-                        (hypflag, bench, algo, hyper, i)
+                        (hypflag, bench, algo, hypval, i)
                     print(out)
             
 
