@@ -16,8 +16,8 @@
 (rule (=> 
     (and 
         (inv z0 x0 y0 w0)
-        (= x1 (ite (= w0 1) (+ x0 1) x0))
-        (= w1 (ite (= w0 1) 0 w0))
+        (= x1 (ite (= w0 0) x0 (+ x0 1)))
+        (= w1 (ite (= w0 0) w0 (- 1 w0)))
         (= y1 (ite (= z0 0) (+ y0 1) y0))
         (= z1 (ite (= z0 0) 1 z0))
     )

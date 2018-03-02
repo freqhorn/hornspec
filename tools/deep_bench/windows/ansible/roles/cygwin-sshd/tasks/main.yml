@@ -1,0 +1,71 @@
+---
+- name: stop sshd before running ssh-host-config (if present)
+  win_service: name=sshd state=stopped
+  ignore_errors: yes
+  notify: restart sshd
+
+- name: run ssh-host-config
+  win_shell: C:\tools\cygwin\bin\bash.exe --login -c "ssh-host-config -y --user {{ ansible_user }} --pwd {{ ansible_password }}"
+  become: yes
+  retries: 1
+  register: ssh_host_config
+  until: ssh_host_config is succeeded
+  delay: 2
+  notify: restart sshd
+
+# use sed to get around winrm/UAC permissions issues
+- name: update sshd_config for public key authentication
+  win_shell: "{{ cygwin_root }}\\bin\\bash --login -c \"sed -i -e '{{ item }}' /etc/sshd_config\""
+  become: yes
+  notify: restart sshd
+  with_items:
+    - s/#PubkeyAuthentication yes/PubkeyAuthentication yes/i
+    - s/StrictModes yes/StrictModes no/i
+    - s/#PasswordAuthentication yes/PasswordAuthentication yes/i
+
+- name: create .ssh folder
+  win_file:
+    path: "{{ cygwin_root }}\\home\\{{ ansible_user }}\\.ssh"
+    state: directory
+
+- name: create .ssh/authorized_keys file
+  win_file:
+    path: "{{ cygwin_root }}\\home\\{{ ansible_user }}\\.ssh\\authorized_keys"
+    state: touch
+  
+- name: set owner for .ssh
+  win_owner:
+    path: "{{ cygwin_root }}\\home\\{{ ansible_user }}\\.ssh"
+    user: "{{ ansible_user }}"
+    recurse: yes
+
+- name: set file perms on .ssh and authorized_keys
+  win_shell: "{{ cygwin_root }}\\bin\\bash --login -c \"chmod {{ item }}\""
+  with_items:
+    - 700 ~/.ssh
+    - 600 ~/.ssh/authorized_keys
+
+- name: authorize investigators' public keys for SSH remote login
+  win_lineinfile:
+    dest: "{{ cygwin_root }}\\home\\{{ ansible_user }}\\.ssh\\authorized_keys"
+    line: "{{ item }}"
+    create: yes
+  with_items:
+    - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC5uk2exzbNv0xO3ZkUOfFrOvQ917GUc2snhK6isoFs3TBGOmltNOlYATbjtnF/hu+wxQvkRklgRcUiUywRVdeMc30Yj8mQaXsuZO7jg2kH+kdKUGQUhOssxSDamqEpiMtdUmKaJDyefFTTcd4ho4MlxxCoBcoDzR9B786Sjfw9IwXLUB3HSg4GAdzmJounYbjK+oIa6L3tkRwlLAYzRhhRVVNSRx37R+PhdAdQ7UZAkDK8zSfwe/xJntuEqDyexPP36rnzYt6Ucifl7tNdVgnjHATj6SPfMXXkTpSWxL2fWc9Ka6RP9nL29N/G3nr64XI+fahckfzS+WFJnefv2ga1 skaufman@Sams-MacBook-Pro.local
+    - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDNF6M5FlBSv+lCLOir6BBWgnMkTuwIsem2WmLjhNbAESlOaMgM9VN4MpFhpclJGiQOs3HxYmy8TD+usgMzIdW2tLLJKJHk/+z7MKNOn/UXPRLKq0FtXfVMYsfqviwK0+HrKZXvcBuyyy8pmBauO7sUp5xPMaL68N/u1jZZRm3NLSqX2BsX+JCVpDrSJJ/u6R2p9aX0bpRjMM6cbFRzFB0Gy+V7hje4vE2EYzEINPDKMa5qhsuPj9dV/11Y42g50sppniURn+8j5qcBfbGr/nTovQKeaT5K//lTkUYf7G4wEmGMzbfWwLEgbwLeGzeFFbSwQLx/l7CYOFItjly4Dk5j grigory@Grigorys-MacBook-Pro.local
+
+- name: open a port for SSH
+  win_firewall_rule:
+    name: SSH
+    localport: 22
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes
+
+- name: start sshd
+  win_service:
+    name: sshd
+    state: started
+    start_mode: auto

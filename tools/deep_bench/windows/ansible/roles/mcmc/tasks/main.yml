@@ -1,0 +1,34 @@
+---
+
+- name: check if MCMC folder exists
+  win_stat:
+    path: C:\MCMC
+  register: mcmc_folder_info
+
+# - name: copy pre-built MCMC ZIP
+#   win_copy:
+#     src: ../files/mcmc.zip
+#     dest: c:\MCMC.zip
+#     force: no
+#   when: not mcmc_folder_info.stat.exists
+
+- name: download pre-built MCMC ZIP
+  win_get_url:
+    url: https://s3.amazonaws.com/parsec-deploy/mcmc.zip
+    dest: c:\MCMC.zip
+    force: yes
+  when: not mcmc_folder_info.stat.exists
+
+- name: unzip MCMC.zip
+  win_unzip:
+    src: c:\MCMC.zip
+    dest: c:\
+    creates: c:\MCMC
+  when: not mcmc_folder_info.stat.exists
+
+- name: Set MCMC_ROOT env var
+  win_environment:
+    state: present
+    name: MCMC_ROOT
+    value: c:\MCMC
+    level: machine

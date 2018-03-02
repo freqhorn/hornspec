@@ -1,0 +1,10 @@
+[linux]
+
+[linux:vars]
+ansible_user=ubuntu
+ansible_private_key_file=/home/skaufman/.ssh/deephornec2.pem
+
+[linux:children]
+tag_FreqHornPlatform_Linux
+
+[tag_FreqHornPlatform_Linux]

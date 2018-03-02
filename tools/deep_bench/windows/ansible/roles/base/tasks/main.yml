@@ -1,0 +1,59 @@
+---
+
+# - name: download the Cygwin installer
+#   win_get_url:
+#     url: https://cygwin.com/setup-x86.exe
+#     dest: C:\cygwin-setup-x86.exe
+#     force: no
+
+- name: remove mingw (but not msys2)
+  win_chocolatey:
+    name: mingw
+    state: absent
+
+# - name: remove Visual Studio (not the build tool)
+#   win_chocolatey:
+#     name: visualstudio2017community
+#     state: absent
+
+- name: install Cygwin and cyg-get (via Chocolatey)
+  win_chocolatey:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - cygwin
+    - cyg-get
+    - msys2
+
+- name: install a bunch of Cygwin packages
+  win_shell: cyg-get.bat git rsync vim python2 python2-pip python2-devel openssh gcc-core
+
+# - name: run the Cygwin installer/update packages
+#   win_shell: C:\cygwin-setup-x86.exe --site http://mirrors.kernel.org/sourceware/cygwin/ --quiet-mode --root {{ cygwin_root }} --arch x86 --local-package-dir C:\cygwinx86\cygwin-packages --verbose --packages git,rsync,vim,python2,python2-pip,python2-devel,openssh,gcc-core
+
+# TODO: install msys packages: make mingw-x86_64-i686-gcc libreadline
+
+# TODO: automate make clean; make inside the mingw32 shell
+
+# TODO: copy c5.0.dtpenalty and dtentropy into Binaries
+
+- name: install Visual Studio Redistributables and Build Tools
+  win_chocolatey:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - vcredist-all
+    - visualstudio2017buildtools
+    - visualstudio2017-workload-vctools
+    # - visualstudio2017-workload-netcoretools
+    # - nugetpackagemanager
+    # - visualstudio2017community
+    # - visualstudio2017-workload-manageddesktop
+  retries: 1
+  register: chocolatey_pkgs
+  until: chocolatey_pkgs is succeeded
+  delay: 2
+
+- name: reboot the machine
+  win_reboot:
+  when: chocolatey_pkgs|changed

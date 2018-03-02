@@ -1,0 +1,33 @@
+---
+
+- name: install a non-Cygwin Python 2 (with Chocolatey)
+  win_chocolatey:
+    name: python2
+    state: present
+
+- name: see if spacer directory exists
+  win_stat:
+    path: C:\tools\cygwin\home\{{ ansible_user }}\spacer
+  register: spacer_folder_info
+
+- name: see if Spacer's z3.exe is built
+  win_stat:
+    path: C:\tools\cygwin\home\{{ ansible_user }}\spacer\build\z3.exe
+  register: spacer_bin_info
+
+- name: git pull spacer3
+  win_command: C:\tools\cygwin\bin\bash.exe --login -c "git clone --branch spacer3 https://bitbucket.org/spacer/code.git spacer"
+  when: not spacer_folder_info.stat.exists
+
+- name: add smmintrin.h include to hwf.cpp (to compile with VS 2017)
+  win_lineinfile:
+    path: C:\tools\cygwin\home\{{ ansible_user }}\spacer\src\util\hwf.cpp
+    line: "#include<smmintrin.h>"
+    regexp: '^\s*#include\s*\<smmintrin(\.h(pp)?)?\>'
+    insertafter: '^\s*#include'
+
+- name: build Spacer
+  win_shell: '"C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\Common7\Tools\VsDevCmd.bat" && cd C:\tools\cygwin\home\{{ ansible_user }}\spacer && python scripts\mk_make.py && cd build && nmake'
+  args:
+    executable: cmd.exe
+  when: not spacer_bin_info.stat.exists

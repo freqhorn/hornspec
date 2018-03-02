@@ -1,0 +1,9 @@
+---
+- hosts: all
+  roles:
+    - base
+    - cygwin-sshd
+    - ice
+    - mcmc
+    - spacer
+    - benchscripts

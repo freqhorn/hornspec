@@ -1,0 +1,34 @@
+---
+
+- name: check if ICE folder exists
+  win_stat:
+    path: C:\ICE
+  register: ICE_folder_info
+
+# - name: copy pre-built ICE ZIP
+#   win_copy:
+#     src: ../files/ICE.zip
+#     dest: c:\ICE.zip
+#     force: no
+#   when: not ICE_folder_info.stat.exists
+
+- name: download pre-built ICE ZIP
+  win_get_url:
+    url: https://s3.amazonaws.com/parsec-deploy/ice.zip
+    dest: c:\ICE.zip
+    force: yes
+  when: not ICE_folder_info.stat.exists
+
+- name: unzip ICE.zip
+  win_unzip:
+    src: c:\ICE.zip
+    dest: c:\
+    creates: c:\ICE
+  when: not ICE_folder_info.stat.exists
+
+- name: Set ICE_ROOT env var
+  win_environment:
+    state: present
+    name: ICE_ROOT
+    value: c:\ICE
+    level: machine

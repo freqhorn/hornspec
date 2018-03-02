@@ -1,0 +1,34 @@
+---
+- name: remove deprecated script benchmark-others.py
+  win_file:
+    path: C:\benchmark-others.py
+    state: absent
+
+- name: copy benchmark-supervisor.py to C:\
+  win_copy:
+    src: ../../../../../scripts/benchmark-supervisor.py
+    dest: C:\
+
+- name: install packages for benchmark-supervisor.py
+  win_shell: "{{ cygwin_root }}\\bin\\bash.exe --login -c \"{{ item }}\""
+  with_items:
+    - pip2 install subprocess32
+  
+- name: delete old benchmarks
+  win_file:
+    path: C:\{{ item }}
+    state: absent
+  with_items:
+    - bench_horn
+    - bench_horn_ice
+    - bench_horn_mcmc
+
+- name: copy benchmarks
+  win_copy:
+    src: ../../../../../../{{ item }}/
+    dest: C:\{{ item }}
+    force: yes
+  with_items:
+    - bench_horn
+    - bench_horn_ice
+    - bench_horn_mcmc
