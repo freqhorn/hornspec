@@ -6,7 +6,7 @@ Satisfiability solver for constrained Horn clauses (CHC) based on the Expression
 News
 ========
 
-A more efficient release (FreqHorn-2) is now available. It features a two-stage process: 1) deterministic bootstrapping with interpolation-based proofs of bounded safety, 2) nondeterministic sampling with the inductive subset extraction and on-demand exploiting of counterexamples-to-induction. Find more details at the TACAS'18 <a href="http://www.cs.princeton.edu/~grigoryf/freqhorn_followup.pdf">paper</a>.
+A more efficient release (FreqHorn-2) is now available. It features a two-stage process: 1) deterministic bootstrapping with interpolation-based proofs of bounded safety, 2) nondeterministic sampling with the inductive subset extraction and on-demand exploiting of counterexamples-to-induction. Find more details at the TACAS'18 <a href="http://www.cs.princeton.edu/~grigoryf/freqhorn_followup.pdf">paper</a> (<a href="http://www.cs.princeton.edu/~grigoryf/freqhorn_tacas_slides.pdf">slides</a>).
 
 Installation
 ============
