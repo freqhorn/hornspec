@@ -19,7 +19,7 @@
   )
 )
 
-(rule (=> (FUN m) (SAD m)))
+(rule (=> (and (FUN m) (= m1 (- m 22))) (SAD m1)))
 
 (rule (=> 
     (and 

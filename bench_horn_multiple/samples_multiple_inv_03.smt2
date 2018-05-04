@@ -11,15 +11,14 @@
   )
 )
 
-
 (rule (=> (WRAP m) (NEST m)))
 
 (rule (=> (NEST m) (WEEE m)))
 
 (rule (=> 
     (and 
-	(WEEE m)
-	(= m1 (+ m 1))
+      (WEEE m)
+      (= m1 (+ m 1))
     )
     (WEEE m1)
   )

@@ -19,18 +19,18 @@
   )
 )
 
-(rule (=> (FUN m) (SAD m)))
+(rule (=> (and (FUN m) (= m1 (- m))) (SAD m1)))
 
 (rule (=> 
     (and 
       (SAD m)
-      (= m1 (+ m 2))
+      (= m1 (- m 2))
     )
     (SAD m1)
   )
 )
 
-(rule (=> (and (SAD m) (not (>= m 30))) fail))
+(rule (=> (and (SAD m) (not (<= m -30))) fail))
 
-(query fail :print-certificate true)
+(query fail)
 

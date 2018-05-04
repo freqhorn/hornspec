@@ -276,7 +276,7 @@ namespace ufo
 
     bool checkBoundedProofs (ExprSet& itpCandidates)
     {
-      assert(invNumber == 1);
+      if (invNumber == 1) return false; // not supported yet
 
       for (auto it = itpCandidates.begin(), end = itpCandidates.end(); it != end; )
       {

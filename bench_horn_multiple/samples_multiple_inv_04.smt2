@@ -13,8 +13,8 @@
 
 (rule (=>
     (and
-	(FUN m)
-	(= m1 (+ m 1))
+      (FUN m)
+      (= m1 (+ m 1))
     )
     (FUN m1)
   )
@@ -24,8 +24,8 @@
 
 (rule (=>
     (and
-	(SAD m)
-	(= m1 (+ m 2))
+      (SAD m)
+      (= m1 (+ m 2))
     )
     (SAD m1)
   )
@@ -35,8 +35,8 @@
 
 (rule (=>
     (and
-	(WEE m)
-	(= m1 (+ m 3))
+      (WEE m)
+      (= m1 (+ m 3))
     )
     (WEE m1)
   )

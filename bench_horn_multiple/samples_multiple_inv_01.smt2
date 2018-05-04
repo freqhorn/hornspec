@@ -10,20 +10,18 @@
   )
 )
 
-
 (rule (=> (WRAP m) (NEST m)))
 
 (rule (=> 
     (and 
-	(NEST m)
-	(= m1 (+ m 1))
+      (NEST m)
+      (= m1 (+ m 1))
     )
     (NEST m1)
   )
 )
 
 (rule (=> (NEST m) (WRAP m)))
-
 
 (rule (=> (and (WRAP m) (not (>= m 0))) fail))
 

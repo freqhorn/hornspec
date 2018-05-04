@@ -1,4 +1,5 @@
 #include "deep/RndLearnerV2.hpp"
+#include "deep/RndLearnerV3.hpp"
 
 using namespace ufo;
 using namespace std;
@@ -41,6 +42,7 @@ int main (int argc, char ** argv)
   const char *OPT_HELP = "--help";
   const char *OPT_V1 = "--v1";
   const char *OPT_V2 = "--v2";
+  const char *OPT_V3 = "--v3";
   const char *OPT_MAX_ATTEMPTS = "--attempts";
   const char *OPT_K_IND = "--kind";
   const char *OPT_ITP = "--itp";
@@ -53,8 +55,8 @@ int main (int argc, char ** argv)
 
   if (getBoolValue(OPT_HELP, false, argc, argv) || argc == 1){
     outs () <<
-        "* * *                                 FreqHorn v.0.2 - Copyright (C) 2017                                 * * *\n" <<
-        "                                       Grigory Fedyukovich & Sam Kaufman                                       \n\n" <<
+        "* * *                                 FreqHorn v.0.3 - Copyright (C) 2018                                 * * *\n" <<
+        "                                           Grigory Fedyukovich et al                                      \n\n" <<
         "Usage:                          Purpose:\n" <<
         " freqhorn [--help]               show help\n" <<
         " freqhorn [options] <file.smt2>  discover invariants for a system of constrained Horn clauses\n" <<
@@ -62,6 +64,7 @@ int main (int argc, char ** argv)
         "Options:\n" <<
         " " << OPT_V1 << "                            original version (just one-by-one sampling)\n"
         " " << OPT_V2 << " (default)                  revised version (all-at once bootstrapping and sampling)\n\n"
+        " " << OPT_V3 << "                            Multi-loop version (in progress)\n\n"
         " " << OPT_MAX_ATTEMPTS << " <N>                  maximal number of candidates to sample and check\n" <<
         " " << OPT_OUT_FILE << " <file.smt2>               serialize invariants to `file.smt2`\n" <<
         " " << OPT_GET_FREQS << "                         calculate frequency distributions and sample from them\n\n" <<
@@ -81,14 +84,15 @@ int main (int argc, char ** argv)
 
   bool vers1 = getBoolValue(OPT_V1, false, argc, argv);
   bool vers2 = getBoolValue(OPT_V2, false, argc, argv);
-  if (vers1 && vers2)
+  bool vers3 = getBoolValue(OPT_V3, false, argc, argv);
+  if (vers1 + vers2 + vers3 > 1)
   {
     outs() << "Only one version of the algorithm can be chosen\n";
     return 0;
   }
 
-  if (!vers1 && !vers2) vers2 = true; // default
-  
+  if (!vers1 && !vers2 && !vers3) vers2 = true; // default
+
   int maxAttempts = getIntValue(OPT_MAX_ATTEMPTS, 2000000, argc, argv);
   bool kinduction = getBoolValue(OPT_K_IND, false, argc, argv);
   bool densecode = getBoolValue(OPT_GET_FREQS, false, argc, argv);
@@ -99,10 +103,12 @@ int main (int argc, char ** argv)
   int retry = getIntValue(OPT_RETRY, 3, argc, argv);
   char * outfile = getStrValue(OPT_OUT_FILE, NULL, argc, argv);
 
-  if (vers2)  // run a revised algorithm
+  if (vers3)      // new experimental algorithm for multiple loops
+    learnInvariants3(string(argv[argc-1]), outfile, maxAttempts, densecode, aggressivepruning);
+  else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), outfile, maxAttempts,
                   itp, batch, retry, densecode, aggressivepruning);
-  else        // run an old algorithm
+  else            // run the FMCAD'17 algorithm
     learnInvariants(string(argv[argc-1]), outfile, maxAttempts,
                   kinduction, itp, densecode, addepsilon, aggressivepruning);
   return 0;
