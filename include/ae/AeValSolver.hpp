@@ -258,7 +258,7 @@ namespace ufo
     {
       if (partitioning_size == 0){
         if (debug) outs() << "WARNING: Trivial valid subset (equal to False) due to 0 iterations\n";
-        return NULL;
+        return mk<FALSE>(efac);
       }
       Expr prs = disjoin(projections, efac);
       if (isOpX<TRUE>(s)) return prs;

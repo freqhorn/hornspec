@@ -35,7 +35,6 @@ namespace ufo
     private:
     ExprFactory &m_efac;
 
-    ExprVector vars;
     vector<Sampl> samples;
 
     density hasBooleanComb;
@@ -104,6 +103,13 @@ namespace ufo
       int maxArity = 0;
       set<int> orArities;
 
+      if (samples.size() == 0)
+      {
+        // artificially add one default sample in case there is nothing here
+        // TODO: find a better solution
+        exprToSampl (mk<GEQ>(lf.getVars()[0], mkTerm (mpz_class (0), m_efac)));
+      }
+
       for (auto &s : samples)
       {
         maxArity = max (maxArity, s.arity());
@@ -117,7 +123,6 @@ namespace ufo
           orArities.insert(i);
       }
 
-      assert(orArities.size() > 0);
       lf.initDensities(orArities);
       bf.initDensities();
 

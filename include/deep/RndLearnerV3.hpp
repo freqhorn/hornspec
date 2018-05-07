@@ -53,8 +53,11 @@ namespace ufo
     {
       for (auto &hr: ruleManager.chcs)
       {
-        if ((hr.srcRelation == rel || hr.dstRelation == rel) && !hr.isQuery)
-          if (!checkCHC(hr)) return false; // TODO: use this knowledge somehow
+        if ((  (hr.srcRelation == rel &&
+              find(checked.begin(), checked.end(), hr.dstRelation) != checked.end())
+            || (hr.dstRelation == rel &&
+              find(checked.begin(), checked.end(), hr.srcRelation) != checked.end())))
+          if (!hr.isQuery && !checkCHC(hr)) return false; // TODO: use this knowledge somehow
       }
       return true;
     }
@@ -86,14 +89,11 @@ namespace ufo
       if (ae.solve())
       {
         Expr newCand = ae.getValidSubset();
-        if (newCand != NULL)
-        {
-          int invNum = getVarIndex(rel, decls);
-          for (auto & v : invarVars[invNum]) newCand = replaceAll(newCand, varsRenameFrom[v.first], v.second);
-          return checkCand(invNum, newCand);
-        }
+        int invNum = getVarIndex(rel, decls);
+        for (auto & v : invarVars[invNum]) newCand = replaceAll(newCand, varsRenameFrom[v.first], v.second);
+        return checkCand(invNum, newCand);
       }
-      return false;
+      return true;
     }
 
     // TODO: try propagating learned lemmas too
@@ -138,7 +138,7 @@ namespace ufo
       bool res = propagate(curInv, cand);
       if (res)
       {
-//        outs() << "lemma learned for " << *rel << "\n";
+//        outs() << "lemma learned for " << *rel << ":\n      " << *cand << "\n";
         SamplFactory& sf = sfs[curInv].back();
         sf.learnedExprs.insert(cand);
         Sampl& s = sf.exprToSampl(cand);
@@ -167,6 +167,21 @@ namespace ufo
         curInv = (curInv + 1) % invNumber;
         // just natural order; TODO: find a smarter way to calculate; make parametrizable
       }
+    }
+
+    bool bootstrap(map<Expr, ExprSet>& cands){
+      // TODO: batching
+      for (auto & dcl: decls) {
+        for (auto & cand : cands[dcl]) {
+          checked.clear();
+          candidates.clear();
+          if (checkCand(getVarIndex(dcl, decls), cand) && checkAllLemmas()) {
+            outs () << "Success after bootstrapping\n";
+            return true;
+          }
+        }
+      }
+      return false;
     }
 
     bool checkAllLemmas()
@@ -231,14 +246,15 @@ namespace ufo
       return;
     }
 
-    ExprSet stub;
+    map<Expr, ExprSet> cands;
     for (auto& dcl: ruleManager.decls)
     {
       ds.initializeDecl(dcl);
-      ds.doSeedMining(dcl->arg(0), stub);
+      ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)]);
     }
 
     ds.calculateStatistics();
+    if (ds.bootstrap(cands)) return;
     ds.synthesize(maxAttempts, outfile);
   }
 }
