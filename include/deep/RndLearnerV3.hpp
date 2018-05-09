@@ -87,8 +87,9 @@ namespace ufo
       return mk<TRUE>(m_efac);
     }
 
-    bool getCandForAdjacentRel(Expr formula, ExprVector& varsRenameFrom, Expr rel)
+    bool getCandForAdjacentRel(Expr candToProp, Expr constraint, ExprVector& varsRenameFrom, Expr rel)
     {
+      Expr formula = mk<AND>(candToProp, constraint);
       if (findNonlin(formula))
       {
         // Currently unsupported,
@@ -97,17 +98,40 @@ namespace ufo
         return checkAllAdjacent(rel);
       }
 
+      ExprSet dsjs;
+      getDisj(candToProp, dsjs);
+      ExprSet newSeedDsjs;
       int invNum = getVarIndex(rel, decls);
-      Expr newCand = eliminateQuantifiers(formula, varsRenameFrom, invNum);
-      if (!isOpX<TRUE>(newCand)) return checkCand(invNum, newCand);
+
+      for (auto & d : dsjs)
+        newSeedDsjs.insert(eliminateQuantifiers(mk<AND>(d, constraint), varsRenameFrom, invNum));
+
+      Expr newCand = disjoin(newSeedDsjs, m_efac);
+
+      if (!isOpX<TRUE>(newCand))
+      {
+        // TODO: more fine-grained refinement
+        bool res = checkCand(invNum, newCand);
+        if (res) return res;
+
+        candidates[invNum] = mk<TRUE>(m_efac);
+        return checkAllAdjacent(rel);
+      }
       else return true;
     }
 
     // similar to getCandForAdjacentRel, but not recursive
-    Expr getSeedsByQE(Expr formula, ExprVector& varsRenameFrom, Expr rel)
+    Expr getSeedsByQE(Expr candToProp, Expr constraint, ExprVector& varsRenameFrom, Expr rel)
     {
+      Expr formula = mk<AND>(candToProp, constraint);
       if (findNonlin(formula)) return mk<TRUE>(m_efac);
-      return eliminateQuantifiers(formula, varsRenameFrom, getVarIndex(rel, decls));
+      ExprSet dsjs;
+      getDisj(candToProp, dsjs);
+      ExprSet newSeedDsjs;
+      for (auto & d : dsjs)
+        newSeedDsjs.insert(eliminateQuantifiers(mk<AND>(d, constraint), varsRenameFrom, getVarIndex(rel, decls)));
+
+      return disjoin(newSeedDsjs, m_efac);
     }
 
     // TODO: try propagating learned lemmas too
@@ -124,7 +148,7 @@ namespace ufo
         {
           Expr replCand = cand;
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.srcVars[v.first]);
-          res = res && getCandForAdjacentRel (mk<AND> (replCand, hr.body), hr.dstVars, hr.dstRelation);
+          res = res && getCandForAdjacentRel (replCand, hr.body, hr.dstVars, hr.dstRelation);
         }
 
         // backward (very similarly):
@@ -132,7 +156,7 @@ namespace ufo
         {
           Expr replCand = cand;
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.dstVars[v.first]);
-          res = res && getCandForAdjacentRel (mk<AND> (replCand, hr.body), hr.srcVars, hr.srcRelation);
+          res = res && getCandForAdjacentRel (replCand, hr.body, hr.srcVars, hr.srcRelation);
         }
       }
       return res;
@@ -194,7 +218,7 @@ namespace ufo
         {
           Expr replCand = cand;
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.srcVars[v.first]);
-          Expr newcand = getSeedsByQE (mk<AND> (replCand, hr.body), hr.dstVars, hr.dstRelation);
+          Expr newcand = getSeedsByQE (replCand, hr.body, hr.dstVars, hr.dstRelation);
 //          outs () << " propagated seed for " << *hr.dstRelation << ": " << *newcand << "\n";
           cands[hr.dstRelation].insert(newcand);
         }
@@ -203,7 +227,7 @@ namespace ufo
         {
           Expr replCand = cand;
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.dstVars[v.first]);
-          Expr newcand = getSeedsByQE (mk<AND> (replCand, hr.body), hr.srcVars, hr.srcRelation);
+          Expr newcand = getSeedsByQE (replCand, hr.body, hr.srcVars, hr.srcRelation);
 //          outs () << " propagated seed for " << *hr.srcRelation << ": " << *newcand << "\n";
           cands[hr.srcRelation].insert(newcand);
         }

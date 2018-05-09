@@ -1,5 +1,6 @@
 (declare-rel FUN (Int Int))
 (declare-rel SAD (Int Int))
+(declare-rel WEE (Int Int))
 (declare-var k Int)
 (declare-var k1 Int)
 (declare-var j Int)
@@ -11,10 +12,10 @@
 
 (rule (=> 
     (and 
-      (FUN k j)
-      (< j 1000)
-      (= k1 (+ k 1))
-      (= j1 (+ j 1))
+        (FUN k j)
+        (< j 1000)
+        (= k1 (+ k 1))
+        (= j1 (+ j 1))
     )
     (FUN k1 j1)
   )
@@ -33,6 +34,19 @@
   )
 )
 
-(rule (=> (and (SAD k j) (>= j 1000) (< k 2000)) fail))
+(rule (=> (and (SAD k j) (>= j 1000) (= k1 k) (= j1 0)) (WEE k1 j1)))
+
+(rule (=>
+    (and
+        (WEE k j)
+        (< j 1000)
+        (= k1 (+ k 1))
+        (= j1 (+ j 1))
+    )
+    (WEE k1 j1)
+  )
+)
+
+(rule (=> (and (WEE k j) (>= j 1000) (< k 3000)) fail))
 
 (query fail)
