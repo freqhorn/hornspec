@@ -61,11 +61,30 @@ namespace ufo
       }
       return true;
     }
-    
+
     bool checkInductiveness(Expr rel)
     {
       int indRule = getInductiveRule(rel);
       return (indRule == -1) ? checkAllAdjacent(rel) : checkCHC(ruleManager.chcs[indRule]);
+    }
+
+    Expr eliminateQuantifiers(Expr formula, ExprVector& varsRenameFrom, int invNum)
+    {
+      ExprSet allVars;
+      ExprSet quantified;
+      expr::filter (formula, bind::IsConst(), std::inserter (allVars, allVars.begin ()));
+      for (auto & v : allVars)
+        if (find(varsRenameFrom.begin(), varsRenameFrom.end(), v) == varsRenameFrom.end())
+          quantified.insert(v);
+
+      AeValSolver ae(mk<TRUE>(m_efac), formula, quantified);
+      if (ae.solve())
+      {
+        Expr newCand = ae.getValidSubset();
+        for (auto & v : invarVars[invNum]) newCand = replaceAll(newCand, varsRenameFrom[v.first], v.second);
+        return newCand;
+      }
+      return mk<TRUE>(m_efac);
     }
 
     bool getCandForAdjacentRel(Expr formula, ExprVector& varsRenameFrom, Expr rel)
@@ -78,22 +97,17 @@ namespace ufo
         return checkAllAdjacent(rel);
       }
 
-      ExprSet allVars;
-      ExprSet quantified;
-      expr::filter (formula, bind::IsConst(), std::inserter (allVars, allVars.begin ()));
-      for (auto & v : allVars)
-        if (find(varsRenameFrom.begin(), varsRenameFrom.end(), v) == varsRenameFrom.end())
-          quantified.insert(v);
+      int invNum = getVarIndex(rel, decls);
+      Expr newCand = eliminateQuantifiers(formula, varsRenameFrom, invNum);
+      if (!isOpX<TRUE>(newCand)) return checkCand(invNum, newCand);
+      else return true;
+    }
 
-      AeValSolver ae(mk<TRUE>(m_efac), formula, quantified);
-      if (ae.solve())
-      {
-        Expr newCand = ae.getValidSubset();
-        int invNum = getVarIndex(rel, decls);
-        for (auto & v : invarVars[invNum]) newCand = replaceAll(newCand, varsRenameFrom[v.first], v.second);
-        return checkCand(invNum, newCand);
-      }
-      return true;
+    // similar to getCandForAdjacentRel, but not recursive
+    Expr getSeedsByQE(Expr formula, ExprVector& varsRenameFrom, Expr rel)
+    {
+      if (findNonlin(formula)) return mk<TRUE>(m_efac);
+      return eliminateQuantifiers(formula, varsRenameFrom, getVarIndex(rel, decls));
     }
 
     // TODO: try propagating learned lemmas too
@@ -101,25 +115,24 @@ namespace ufo
     {
       bool res = true;
       Expr rel = decls[invNum];
-      for (int i = 0; i < ruleManager.chcs.size(); i++)
+      for (auto & hr : ruleManager.chcs)
       {
-        auto & a = ruleManager.chcs[i];
-        if (a.srcRelation == a.dstRelation) continue;
+        if (hr.srcRelation == hr.dstRelation) continue;
 
         // forward:
-        if (a.srcRelation == rel && find(checked.begin(), checked.end(), a.dstRelation) == checked.end() && !a.isQuery)
+        if (hr.srcRelation == rel && find(checked.begin(), checked.end(), hr.dstRelation) == checked.end() && !hr.isQuery)
         {
           Expr replCand = cand;
-          for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, a.srcVars[v.first]);
-          res = res && getCandForAdjacentRel (mk<AND> (replCand, a.body), a.dstVars, a.dstRelation);
+          for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.srcVars[v.first]);
+          res = res && getCandForAdjacentRel (mk<AND> (replCand, hr.body), hr.dstVars, hr.dstRelation);
         }
 
         // backward (very similarly):
-        if (a.dstRelation == rel && find(checked.begin(), checked.end(), a.srcRelation) == checked.end() && !a.isFact)
+        if (hr.dstRelation == rel && find(checked.begin(), checked.end(), hr.srcRelation) == checked.end() && !hr.isFact)
         {
           Expr replCand = cand;
-          for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, a.dstVars[v.first]);
-          res = res && getCandForAdjacentRel (mk<AND> (replCand, a.body), a.srcVars, a.srcRelation);
+          for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.dstVars[v.first]);
+          res = res && getCandForAdjacentRel (mk<AND> (replCand, hr.body), hr.srcVars, hr.srcRelation);
         }
       }
       return res;
@@ -133,12 +146,12 @@ namespace ufo
 
       if (!checkInit(curInv, rel)) return false;
       if (!checkInductiveness(rel)) return false;
-      
+
       checked.insert(rel);
       bool res = propagate(curInv, cand);
       if (res)
       {
-//        outs() << "lemma learned for " << *rel << ":\n      " << *cand << "\n";
+//        outs() << "     lemma learned for " << *rel << ":\n      " << *cand << "\n";
         SamplFactory& sf = sfs[curInv].back();
         sf.learnedExprs.insert(cand);
         Sampl& s = sf.exprToSampl(cand);
@@ -166,6 +179,53 @@ namespace ufo
         // next cand (to be sampled)
         curInv = (curInv + 1) % invNumber;
         // just natural order; TODO: find a smarter way to calculate; make parametrizable
+      }
+    }
+
+    // similar to propagate, but not recursive and w/o checking
+    void propagateSeeds(int invNum, Expr cand, map<Expr, ExprSet>& cands)
+    {
+      Expr rel = decls[invNum];
+      for (auto & hr : ruleManager.chcs)
+      {
+        if (hr.srcRelation == hr.dstRelation) continue;
+
+        if (hr.srcRelation == rel && find(checked.begin(), checked.end(), hr.dstRelation) == checked.end() && !hr.isQuery)
+        {
+          Expr replCand = cand;
+          for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.srcVars[v.first]);
+          Expr newcand = getSeedsByQE (mk<AND> (replCand, hr.body), hr.dstVars, hr.dstRelation);
+//          outs () << " propagated seed for " << *hr.dstRelation << ": " << *newcand << "\n";
+          cands[hr.dstRelation].insert(newcand);
+        }
+
+        if (hr.dstRelation == rel && find(checked.begin(), checked.end(), hr.srcRelation) == checked.end() && !hr.isFact)
+        {
+          Expr replCand = cand;
+          for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.dstVars[v.first]);
+          Expr newcand = getSeedsByQE (mk<AND> (replCand, hr.body), hr.srcVars, hr.srcRelation);
+//          outs () << " propagated seed for " << *hr.srcRelation << ": " << *newcand << "\n";
+          cands[hr.srcRelation].insert(newcand);
+        }
+      }
+    }
+
+    // adapted from doSeedMining
+    void getSeeds(Expr invRel, map<Expr, ExprSet>& cands)
+    {
+      int ind = getVarIndex(invRel, decls);
+      SamplFactory& sf = sfs[ind].back();
+      for (auto &hr : ruleManager.chcs)
+      {
+        if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
+        SeedMiner sm (hr, invRel, invarVars[ind], sf.lf.nonlinVars);
+        sm.analyzeCode();
+        for (auto &cand : sm.candidates)
+        {
+//          outs () << "seed for " << *invRel << ": " << *cand << "\n";
+          cands[invRel].insert(cand);
+          propagateSeeds(ind, cand, cands);
+        }
       }
     }
 
@@ -247,11 +307,9 @@ namespace ufo
     }
 
     map<Expr, ExprSet> cands;
-    for (auto& dcl: ruleManager.decls)
-    {
-      ds.initializeDecl(dcl);
-      ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)]);
-    }
+    for (auto& dcl: ruleManager.decls) ds.initializeDecl(dcl);
+    for (auto& dcl: ruleManager.decls) ds.getSeeds(dcl->arg(0), cands);
+    for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)]);
 
     ds.calculateStatistics();
     if (ds.bootstrap(cands)) return;
