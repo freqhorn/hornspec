@@ -274,6 +274,77 @@ namespace ufo
       }
       return itp;
     }
+
+    //TODO: support nested loops
+    bool unrollAndExecute(int trIndex, ufo::ZSolver<ufo::EZ3> & m_smt_solver, vector<vector<int> > & models, int k = 10, Expr initCondn = nullptr)
+    {
+
+      int initIndex;
+      bool initFound = false;
+
+      for (int i = 0; i < trIndex; i++) {
+        auto & r = ruleManager.chcs[i];
+        if (r.isFact) {
+	  initIndex = i;
+	  initFound = true;
+	}
+      }
+
+      if (!initFound && initCondn == nullptr) {
+	cout << "ERR: init not found for given transition (index: " << trIndex << ")" << endl;
+	return false;
+      }
+      
+      Expr init = initCondn == nullptr ? ruleManager.chcs[initIndex].body : initCondn;
+
+      HornRuleExt& tr = ruleManager.chcs[trIndex];
+
+      for (int i = 0; i < tr.srcVars.size(); i++) {
+	init = replaceAll(init, tr.dstVars[i], tr.srcVars[i]);
+      }
+
+	
+      vector<int> trace;
+      for (int i = 0; i < k; i++) {
+	trace.push_back(trIndex);
+      }
+
+      Expr unrolledTr = toExpr(trace);
+
+      //      cout << init << " && " << unrolledTr << endl;
+
+      m_smt_solver.reset();
+      m_smt_solver.assertExpr(init);
+      m_smt_solver.assertExpr(unrolledTr);
+
+      if (!m_smt_solver.solve()) {
+	cout << init << " && " << unrolledTr << "\nfound to be unsat\n";
+	return false;
+      }
+
+      ZSolver<EZ3>::Model m = m_smt_solver.getModel();
+      
+      for (auto vars : bindVars) {
+	vector<int> model;
+	for (auto var : vars) {
+	  int value;
+	  if (var != m.eval(var)) {
+	    stringstream tmpstream;
+	    tmpstream << m.eval(var);
+	    tmpstream >> value;
+	  } else {
+	    value = guessUniformly(1000)-500;
+	    cout << "random guess for: " << var << endl; //DEBUG
+	  }
+	  cout << value << "\t";//DEBUG
+	  model.push_back(value);
+	}
+	cout << endl;//DEBUG
+	models.push_back(model);
+      }
+
+      return true;
+    }
   };
 
   inline void unrollAndCheck(string smt, int bnd1, int bnd2)
