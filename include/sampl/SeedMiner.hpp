@@ -240,7 +240,7 @@ namespace ufo
       }
       else if (hr.isFact)
       {
-        coreProcess(body);
+        coreProcess(propagateEqualities(body));
       }
       else
       {

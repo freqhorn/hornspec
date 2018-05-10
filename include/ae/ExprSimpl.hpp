@@ -2280,7 +2280,6 @@ namespace ufo
   inline static Expr propagateEqualities (Expr exp)
   {
     ExprSet cnjs;
-    ExprSet newCnjs;
     ExprSet eqs;
     ExprSet trEqs;
     
@@ -2291,13 +2290,23 @@ namespace ufo
     
     computeTransitiveClosure<EQ>(eqs, trEqs);
     
-    for (auto &a : cnjs)
+    for (auto &a : trEqs)
     {
       if (isOpX<EQ>(a))
       {
-        newCnjs.insert(a);
+        bool toAdd = true;
+        for (auto & c : cnjs)
+        {
+          if (isOpX<EQ>(c))
+          {
+            if (c->left() == a->left() && c->right() == a->right()) { toAdd = false; break; }
+            if (c->left() == a->right() && c->right() == a->left()) { toAdd = false; break; }
+          }
+        }
+        if (toAdd) cnjs.insert(a);
       }
-      else
+// TODO: double-check if it is needed:
+/*      else
       {
         Expr neg = mkNeg(a);
         for (auto &b : trEqs)
@@ -2308,15 +2317,15 @@ namespace ufo
           bool eq2 = (repl2 == neg);
           bool eq3 = (repl2 == repl1);
           
-          if (eq1 && eq2 && eq3) newCnjs.insert(a);
-          else if (eq1) newCnjs.insert (mk<NEG> (mk<AND>(neg, repl2)));
-          else if (eq2) newCnjs.insert (mk<NEG> (mk<AND>(neg, repl1)));
-          else newCnjs.insert(mk<NEG> (mk<AND>(neg, mk<AND>(repl1, repl2))));
+          if (eq1 && eq2 && eq3) cnjs.insert(a);
+          else if (eq1) cnjs.insert (mk<NEG> (mk<AND>(neg, repl2)));
+          else if (eq2) cnjs.insert (mk<NEG> (mk<AND>(neg, repl1)));
+          else cnjs.insert(mk<NEG> (mk<AND>(neg, mk<AND>(repl1, repl2))));
         }
-      }
+      } */
     }
     
-    return conjoin(newCnjs, exp->getFactory());
+    return conjoin(cnjs, exp->getFactory());
   }
 }
 
