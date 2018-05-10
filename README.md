@@ -4,7 +4,7 @@ FreqHorn
 Satisfiability solver for constrained Horn clauses (CHC) based on the Expression library of <a href="http://seahorn.github.io/">SeaHorn</a> and the <a href="https://github.com/Z3Prover/z3">Z3</a> SMT solver. It combines probabilistic and syntax-guided methods to sample candidate invariants and checks their inductiveness / safety. Find more details at the FMCAD'17 <a href="http://www.cs.princeton.edu/~grigoryf/freqhorn.pdf">paper</a> and <a href="http://www.cs.princeton.edu/~grigoryf/freqhorn_slides.pdf">slides</a>.
 
 News
-========
+====
 
 A more efficient release (FreqHorn-2) is now available. It features a two-stage process: 1) deterministic bootstrapping with interpolation-based proofs of bounded safety, 2) nondeterministic sampling with the inductive subset extraction and on-demand exploiting of counterexamples-to-induction. Find more details at the TACAS'18 <a href="http://www.cs.princeton.edu/~grigoryf/freqhorn_followup.pdf">paper</a> (<a href="http://www.cs.princeton.edu/~grigoryf/freqhorn_tacas_slides.pdf">slides</a>).
 
