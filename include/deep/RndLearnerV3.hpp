@@ -19,16 +19,6 @@ namespace ufo
     RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, bool freqs, bool aggp) :
       RndLearner (efac, z3, r, /*k-induction*/ false, freqs, /*epsilon*/ true, aggp){}
 
-    int getInductiveRule(Expr rel)
-    {
-      for (auto a : ruleManager.outgs[rel])
-      {
-        if (ruleManager.chcs[a].srcRelation == ruleManager.chcs[a].dstRelation)
-          return a;
-      }
-      return -1;
-    }
-
     bool checkInit(int invNum, Expr rel)
     {
       for (int i = 0; i < ruleManager.chcs.size(); i++)
@@ -64,8 +54,14 @@ namespace ufo
 
     bool checkInductiveness(Expr rel)
     {
-      int indRule = getInductiveRule(rel);
-      return (indRule == -1) ? checkAllAdjacent(rel) : checkCHC(ruleManager.chcs[indRule]);
+      for (auto &hr: ruleManager.chcs)
+      {
+        if ((hr.srcRelation == rel && hr.dstRelation == rel) ||
+            (hr.srcRelation == rel && find(checked.begin(), checked.end(), hr.dstRelation) != checked.end()) ||
+            (hr.dstRelation == rel && find(checked.begin(), checked.end(), hr.srcRelation) != checked.end()))
+          if (!hr.isQuery && !checkCHC(hr)) return false;
+      }
+      return true;
     }
 
     Expr eliminateQuantifiers(Expr formula, ExprVector& varsRenameFrom, int invNum)
@@ -95,7 +91,11 @@ namespace ufo
         // Currently unsupported,
         // Cannot propagate anything,
         // So simply try checking if "TRUE" is OK
-        return checkAllAdjacent(rel);
+        if (checkAllAdjacent(rel)){
+          checked.insert(rel);
+          return true;
+        }
+        return false;
       }
 
       ExprSet dsjs;
@@ -108,14 +108,53 @@ namespace ufo
 
       Expr newCand = disjoin(newSeedDsjs, m_efac);
 
+      // reserve
+      ExprSet checkedTmp = checked;
+      map<int, Expr> candidatesTmp = candidates;
+
       if (!isOpX<TRUE>(newCand))
       {
-        // TODO: more fine-grained refinement
-        bool res = checkCand(invNum, newCand);
-        if (res) return res;
+        ExprSet cnjs;
+        getConj(newCand, cnjs);
+        bool resFinal = false;
+        if (cnjs.size() > 1)
+        {
+          resFinal = false;
+          for (auto & a : cnjs) // TODO: Houdini style
+          {
+            candidates[invNum] = a;
+            if (!checkAllAdjacent(rel)) {
+              candidates = candidatesTmp;
+              continue;
+            }
 
-        candidates[invNum] = mk<TRUE>(m_efac);
-        return checkAllAdjacent(rel);
+            bool res = checkCand(invNum, a);
+            if (res)
+            {
+              checkedTmp = checked;
+              candidatesTmp = candidates;
+            }
+            else
+            {
+              checked = checkedTmp;
+              candidates = candidatesTmp;
+            }
+            resFinal = resFinal || res;
+          }
+        }
+        else
+        {
+          resFinal = checkCand(invNum, newCand);
+        }
+
+        if (resFinal) return true;
+        checked = checkedTmp;
+        candidates = candidatesTmp;
+        if (checkAllAdjacent(rel)){
+          checked.insert(rel);
+          return true;
+        }
+        return false;
       }
       else return true;
     }
@@ -172,16 +211,41 @@ namespace ufo
       if (!checkInductiveness(rel)) return false;
 
       checked.insert(rel);
-      bool res = propagate(curInv, cand);
-      if (res)
+      return propagate(curInv, cand);
+    }
+
+    bool learn (int curInv, Expr cand)
+    {
+      if (checkCand(curInv, cand))
       {
-//        outs() << "     lemma learned for " << *rel << ":\n      " << *cand << "\n";
-        SamplFactory& sf = sfs[curInv].back();
-        sf.learnedExprs.insert(cand);
-        Sampl& s = sf.exprToSampl(cand);
-        sf.assignPrioritiesForLearned();
+        for (auto & a : candidates)
+        {
+          if (a.second != NULL && !isOpX<TRUE>(a.second))
+          {
+            SamplFactory& sf = sfs[a.first].back();
+            sf.learnedExprs.insert(a.second); // TODO: split conjunctions
+//            outs() << "     lemmas learned for " << *decls[a.first] << ": " << *a.second << "\n";
+          }
+        }
+
+        if (checkAllLemmas(false))
+        {
+          return true;
+        }
+        else
+        {
+          for (auto & a : candidates)
+          {
+            if (a.second != NULL && !isOpX<TRUE>(a.second))
+            {
+              SamplFactory& sf = sfs[a.first].back();
+              Sampl& s = sf.exprToSampl(cand);  // TODO: split conjunctions
+              sf.assignPrioritiesForLearned();
+            }
+          }
+        }
       }
-      return res;
+      return false;
     }
 
     void synthesize(int maxAttempts, char * outfile)
@@ -195,7 +259,8 @@ namespace ufo
         Expr cand = sf.getFreshCandidate();
         if (cand == NULL) continue;
 
-        if (checkCand(curInv, cand) && checkAllLemmas()) {
+        if (learn(curInv, cand))
+        {
           outs () << "Success after " << (i+1) << " iterations\n";
           return;
         }
@@ -259,7 +324,7 @@ namespace ufo
         for (auto & cand : cands[dcl]) {
           checked.clear();
           candidates.clear();
-          if (checkCand(getVarIndex(dcl, decls), cand) && checkAllLemmas()) {
+          if (learn(getVarIndex(dcl, decls), cand)) {
             outs () << "Success after bootstrapping\n";
             return true;
           }
@@ -268,12 +333,12 @@ namespace ufo
       return false;
     }
 
-    bool checkAllLemmas()
+    bool checkAllLemmas(bool addCand = true)
     {
       candidates.clear();
       for (auto &hr: ruleManager.chcs)
       {
-        if (!checkCHC(hr)) {
+        if (!checkCHC(hr, addCand)) {
           if (!hr.isQuery)
             assert(0);    // only queries are allowed to fail
           else
@@ -283,7 +348,7 @@ namespace ufo
       return true;
     }
 
-    bool checkCHC (HornRuleExt& hr)
+    bool checkCHC (HornRuleExt& hr, bool addCand = true)
     {
       m_smt_solver.reset();
       m_smt_solver.assertExpr (hr.body);
@@ -293,7 +358,7 @@ namespace ufo
         int ind = getVarIndex(hr.srcRelation, decls);
         SamplFactory& sf = sfs[ind].back();
         Expr lmApp = sf.getAllLemmas();
-        if (candidates[ind] != NULL) lmApp = mk<AND>(lmApp, candidates[ind]);
+        if (addCand && candidates[ind] != NULL) lmApp = mk<AND>(lmApp, candidates[ind]);
         for (auto & v : invarVars[ind]) lmApp = replaceAll(lmApp, v.second, hr.srcVars[v.first]);
         m_smt_solver.assertExpr(lmApp);
       }
@@ -303,7 +368,7 @@ namespace ufo
         int ind = getVarIndex(hr.dstRelation, decls);
         SamplFactory& sf = sfs[ind].back();
         Expr lmApp = sf.getAllLemmas();
-        if (candidates[ind] != NULL) lmApp = mk<AND>(lmApp, candidates[ind]);
+        if (addCand && candidates[ind] != NULL) lmApp = mk<AND>(lmApp, candidates[ind]);
         for (auto & v : invarVars[ind]) lmApp = replaceAll(lmApp, v.second, hr.dstVars[v.first]);
         m_smt_solver.assertExpr(mk<NEG>(lmApp));
       }
