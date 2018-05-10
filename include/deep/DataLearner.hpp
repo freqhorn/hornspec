@@ -56,7 +56,7 @@ namespace ufo
 
     struct armaApproxEqual
     {
-      bool operator() (const double & a, const double & b) {
+      bool operator() (const double & a, const double & b) const {
 	if (!arma::approx_equal(arma::vec(1).fill(a), arma::vec(1).fill(b),
 				approxEqualMethod, approxEqualTol)) {
 	  return (a < b);
