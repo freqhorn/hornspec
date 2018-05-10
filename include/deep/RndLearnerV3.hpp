@@ -3,6 +3,10 @@
 
 #include "RndLearner.hpp"
 
+#ifdef HAVE_ARMADILLO
+#include "DataLearner.hpp"
+#endif
+
 using namespace std;
 using namespace boost;
 namespace ufo
@@ -318,7 +322,32 @@ namespace ufo
       }
     }
 
-    bool bootstrap(map<Expr, ExprSet>& cands){
+#ifdef HAVE_ARMADILLO
+    void getDataCandidates(map<Expr, ExprSet>& cands, const vector<string> & behaviorfiles){
+      int fileIndex = 0;
+      for (auto & dcl : decls) {
+	DataLearner dl(ruleManager, m_z3);
+	dl.initialize(dcl);
+	string filename("");
+	if (fileIndex < behaviorfiles.size()) {
+	  filename = behaviorfiles[fileIndex];
+	  fileIndex++;
+	}
+	if (!dl.computeData(filename)) return;
+	(void)dl.computePolynomials(cands[dcl]);
+      }	  
+    }
+#endif
+
+    bool bootstrap(map<Expr, ExprSet>& cands, bool enableDataLearning, const vector<string> & behaviorfiles){
+      if (enableDataLearning) {
+#ifdef HAVE_ARMADILLO
+	getDataCandidates(cands, behaviorfiles);
+#else
+	outs() << "Skipping learning from data as required library(armadillo) not found\n";
+#endif
+      }
+
       // TODO: batching
       for (auto & dcl: decls) {
         for (auto & cand : cands[dcl]) {
@@ -377,7 +406,7 @@ namespace ufo
     }
   };
 
-  inline void learnInvariants3(string smt, char * outfile, int maxAttempts, bool freqs, bool aggp)
+  inline void learnInvariants3(string smt, char * outfile, int maxAttempts, bool freqs, bool aggp, bool enableDataLearning, const vector<string> & behaviorfiles)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
@@ -401,7 +430,7 @@ namespace ufo
     for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)]);
 
     ds.calculateStatistics();
-    if (ds.bootstrap(cands)) return;
+    if (ds.bootstrap(cands, enableDataLearning, behaviorfiles)) return;
     ds.synthesize(maxAttempts, outfile);
   }
 }

@@ -37,6 +37,17 @@ int getIntValue(const char * opt, int defValue, int argc, char ** argv)
   return defValue;
 }
 
+void getStrValues(const char * opt, vector<string> & values, int argc, char ** argv)
+{
+  for (int i = 1; i < argc-1; i++)
+  {
+    if (strcmp(argv[i], opt) == 0)
+    {
+      values.push_back(string(argv[i+1]));
+    }
+  }
+}
+
 int main (int argc, char ** argv)
 {
   const char *OPT_HELP = "--help";
@@ -52,6 +63,8 @@ int main (int argc, char ** argv)
   const char *OPT_GET_FREQS = "--freqs";
   const char *OPT_ADD_EPSILON = "--eps";
   const char *OPT_AGG_PRUNING = "--aggp";
+  const char *OPT_DATA_LEARNING = "--data";
+  const char *OPT_DATA_INPUT = "--data-input";  
 
   if (getBoolValue(OPT_HELP, false, argc, argv) || argc == 1){
     outs () <<
@@ -77,7 +90,10 @@ int main (int argc, char ** argv)
         " " << OPT_AGG_PRUNING << "                          prioritize and prune the search space aggressively\n" <<
         " " << OPT_ITP << "                           bound for itp-based proofs\n" <<
         " " << OPT_BATCH << "                         threshold for how many candidates to check at once\n" <<
-        " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n";
+      " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n" <<
+      " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
+      " " << OPT_DATA_INPUT << "                             name of the file which contains behaviors; can be specified multiple times for each invariant \n"; 
+    
     
     return 0;
   }
@@ -102,9 +118,12 @@ int main (int argc, char ** argv)
   int batch = getIntValue(OPT_BATCH, 3, argc, argv);
   int retry = getIntValue(OPT_RETRY, 3, argc, argv);
   char * outfile = getStrValue(OPT_OUT_FILE, NULL, argc, argv);
+  bool enable_data_learning = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
+  vector<string> data_filenames;
+  getStrValues(OPT_DATA_INPUT, data_filenames, argc, argv);
 
   if (vers3)      // new experimental algorithm for multiple loops
-    learnInvariants3(string(argv[argc-1]), outfile, maxAttempts, densecode, aggressivepruning);
+    learnInvariants3(string(argv[argc-1]), outfile, maxAttempts, densecode, aggressivepruning, enable_data_learning, data_filenames);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), outfile, maxAttempts,
                   itp, batch, retry, densecode, aggressivepruning);
