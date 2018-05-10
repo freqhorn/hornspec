@@ -11,7 +11,7 @@ A more efficient release (FreqHorn-2) is now available. It features a two-stage 
 Installation
 ============
 
-Compiles with gcc-5 (on Linux) and clang-900 (on Mac). Assumes preinstalled Svn, Gmp, and Boost (libboost-system1.55-dev) packages.
+Compiles with gcc-5 (on Linux) and clang-900 (on Mac). Assumes preinstalled Svn, Gmp, and Boost (libboost-system1.55-dev) packages. Additionally, armadillo package to get candidates from behaviors. 
 
 * `cd aeval ; mkdir build ; cd build`
 * `cmake ../`
