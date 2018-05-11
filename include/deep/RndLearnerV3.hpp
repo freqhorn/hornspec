@@ -33,8 +33,11 @@ namespace ufo
           bool res = checkCHC(a);
           if (!res)
           {
+            ExprVector invVars;
+            for (auto & a : invarVars[invNum]) invVars.push_back(a.second);
+            Expr failedCand = normalizeDisj(candidates[invNum], invVars);
             SamplFactory& sf = sfs[invNum].back();
-            Sampl& s = sf.exprToSampl(candidates[invNum]);
+            Sampl& s = sf.exprToSampl(failedCand);
             sf.assignPrioritiesForFailed();
           }
           return res;
@@ -210,7 +213,6 @@ namespace ufo
       Expr rel = decls[curInv];
 //      outs () << "  -- cand for " << *rel << ": " << *cand << "\n";
       candidates[curInv] = cand;
-
       if (!checkInit(curInv, rel)) return false;
       if (!checkInductiveness(rel)) return false;
 
@@ -242,8 +244,11 @@ namespace ufo
           {
             if (a.second != NULL && !isOpX<TRUE>(a.second))
             {
+              ExprVector invVars;
+              for (auto & a : invarVars[curInv]) invVars.push_back(a.second);
+              Expr learnedCand = normalizeDisj(cand, invVars);
               SamplFactory& sf = sfs[a.first].back();
-              Sampl& s = sf.exprToSampl(cand);  // TODO: split conjunctions
+              Sampl& s = sf.exprToSampl(learnedCand);  // TODO: split conjunctions
               sf.assignPrioritiesForLearned();
             }
           }
@@ -326,15 +331,15 @@ namespace ufo
     void getDataCandidates(map<Expr, ExprSet>& cands, const vector<string> & behaviorfiles){
       int fileIndex = 0;
       for (auto & dcl : decls) {
-	DataLearner dl(ruleManager, m_z3);
-	dl.initialize(dcl);
-	string filename("");
-	if (fileIndex < behaviorfiles.size()) {
-	  filename = behaviorfiles[fileIndex];
-	  fileIndex++;
-	}
-	if (!dl.computeData(filename)) return;
-	(void)dl.computePolynomials(cands[dcl]);
+        DataLearner dl(ruleManager, m_z3);
+        dl.initialize(dcl);
+        string filename("");
+        if (fileIndex < behaviorfiles.size()) {
+          filename = behaviorfiles[fileIndex];
+          fileIndex++;
+        }
+        if (!dl.computeData(filename)) return;
+        (void)dl.computePolynomials(cands[dcl]);
       }	  
     }
 #endif
@@ -342,9 +347,9 @@ namespace ufo
     bool bootstrap(map<Expr, ExprSet>& cands, bool enableDataLearning, const vector<string> & behaviorfiles){
       if (enableDataLearning) {
 #ifdef HAVE_ARMADILLO
-	getDataCandidates(cands, behaviorfiles);
+        getDataCandidates(cands, behaviorfiles);
 #else
-	outs() << "Skipping learning from data as required library(armadillo) not found\n";
+        outs() << "Skipping learning from data as required library(armadillo) not found\n";
 #endif
       }
 
