@@ -1880,8 +1880,12 @@ namespace ufo
           // GF: sometimes it fails (no idea why)
           int thisTerm = 1;
           for (auto it = e->args_begin (), end = e->args_end (); it != end; ++it)
-            thisTerm *= lexical_cast<int>(*it);
-          
+          {
+            if (isOpX<MPZ>(*it))
+              thisTerm *= lexical_cast<int>(*it);
+            else
+              success = false;
+          }
           intconst += thisTerm;
         }
         else
