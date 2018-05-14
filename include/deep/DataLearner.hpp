@@ -49,6 +49,56 @@ namespace ufo
     }
   }
 
+  //if multipleloops then executes entire program once and caches models of all inductive relations
+  class loadDataFromSMTHelper
+  {
+  private:
+    static loadDataFromSMTHelper * ptr;
+    map <Expr, vector< vector<int> > > exprToModels;
+    loadDataFromSMTHelper() {}
+
+    bool
+    executeEntireProgram(CHCs & rm, ufo::ZSolver<ufo::EZ3> & solver)
+    {
+      BndExpl bnd(rm);
+      return bnd.unrollAndExecuteMultiple(solver, exprToModels);
+    }
+
+    bool
+    exprModels(const Expr & inv, vector< vector<int> > & models)
+    {
+      auto itr = exprToModels.find(inv);
+      if (itr == exprToModels.end()) {
+	return false;
+      } else {
+	for (auto model : itr->second) {
+	  models.push_back(model);
+	}
+	return true;
+      }
+    }
+
+  public:
+    static bool
+    getModels(bool multipleLoops, const Expr & inv, CHCs & rm,
+	      ufo::ZSolver<ufo::EZ3> & solver, vector< vector<int> > & models)
+    {
+      if (ptr == nullptr) {
+	ptr = new loadDataFromSMTHelper();
+	if (multipleLoops && !(ptr->executeEntireProgram(rm, solver))) {
+	  return false;
+	}
+      }
+
+      if(multipleLoops) {
+	return ptr->exprModels(inv, models);
+      } else {
+	BndExpl bnd(rm);
+	return bnd.unrollAndExecute(inv, solver, models)
+      }
+    }
+    
+  };
   class DataLearner
   {
     
@@ -68,7 +118,9 @@ namespace ufo
     CHCs& ruleManager;
     ExprFactory &m_efac;
     ufo::ZSolver<ufo::EZ3> m_smt_solver;
-    
+
+    Expr inv;
+    bool multipleLoops
     unsigned int numVars;
     int trIndex;
     arma::mat dataMatrix;
@@ -98,7 +150,7 @@ namespace ufo
 	return 1;
       }
 
-      printmsg(INFO, "vars: ", numVars, "\n row x col ", dataMatrix.n_rows, dataMatrix.n_cols);
+      printmsg(DEBUG, "vars: ", numVars, "\n row x col ", dataMatrix.n_rows, dataMatrix.n_cols);
       
       return 0;
     }
@@ -511,7 +563,7 @@ namespace ufo
 	  if (polynomialsComputed.find(cand) == polynomialsComputed.end()) {
 	    addpolytocands(cands, cand);
 	    polynomialsComputed.insert(cand);
-	    printmsg(INFO, "Adding polynomial: ", cand);
+	    printmsg(DEBUG, "Adding polynomial: ", cand);
 	  }
 	}
 
@@ -528,10 +580,9 @@ namespace ufo
     int 
     loadDataFromSMT()
     {
-      BndExpl bnd(ruleManager);
       vector<vector<int> > models;
-      printmsg(INFO, "Unrolling and solving via SMT");
-      if (!bnd.unrollAndExecute(trIndex, m_smt_solver, models)) {
+      printmsg(DEBUG, "Unrolling and solving via SMT");
+      if (!loadDataFromSMTHelper::getModels(multipleLoops, inv, ruleManager, m_smt_solver, models)) {
 	return 1;
       }
 
@@ -553,6 +604,7 @@ namespace ufo
       ruleManager(r), m_smt_solver(z3), m_efac(r.m_efac), trIndex(-1), numVars(0),
       curPolyDegree(1), numPolyCompute(0), prevDataSize(0)
     {
+      multipleLoops = false;
       maxPolyCompute[1] = 5;
       maxPolyCompute[2] = numeric_limits<unsigned int>::max();
       //to let index start from 1
@@ -569,12 +621,13 @@ namespace ufo
 
 
     void
-    initialize(Expr invDecl, unsigned int loglevel = 2)
+    initialize(Expr invDecl, bool multiLoop = false, unsigned int loglevel = 2)
     {
       //      cout << *invDecl << endl;
-      
+      inv = invDecl;
+      multipleLoops = multiLoop;
       setLogLevel(loglevel);
-      initTrIndex(invDecl);
+      //      initTrIndex(invDecl);
       initInvVars(invDecl);
     }
 
@@ -584,14 +637,14 @@ namespace ufo
     {
 
       assert(numVars != 0);
-      if (trIndex == -1) {
+      if (!multipleLoops && trIndex == -1) {
 	printmsg(ERROR, "Relation without inductive clauses are not supported yet");
 	return false;
       }
 
       if (dataFile.empty()) {
 	if (loadDataFromSMT() != 0) {
-	  printmsg(ERROR, "failed to load data from smt");
+	  printmsg(INFO, "failed to load data from smt (also no input file)");
 	  return false;
 	}
       } else {
@@ -613,7 +666,7 @@ namespace ufo
     computePolynomials(CONTAINERT & cands)
     {
 
-      if (trIndex == -1) {
+      if (!multipleLoops && trIndex == -1) {
 	printmsg(ERROR, "Relations without inductive clauses are not supported yet");
 	return -1;
       }
@@ -662,6 +715,8 @@ namespace ufo
     }
 
   };
+
+  loadDataFromSMTHelper * loadDataFromSMTHelper::ptr = nullptr;
 }
 
 

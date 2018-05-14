@@ -275,18 +275,81 @@ namespace ufo
       return itp;
     }
 
-    //TODO: support nested loops
-    bool unrollAndExecute(int trIndex, ufo::ZSolver<ufo::EZ3> & m_smt_solver, vector<vector<int> > & models, int k = 10, Expr initCondn = nullptr)
+    //used for multiple loops to unroll inductive clauses k times and collect corresponding models
+    bool unrollAndExecuteMultiple(ufo::ZSolver<ufo::EZ3> & m_smt_solver,
+				  map<Expr, vector<vector<int> > > & models, int k = 10)
+    {
+      vector<int> traces;
+      map<int, Expr> indexToInv;
+      int chcIndex = 0;
+
+      for (auto & r : ruleManager.chcs) {
+	if (r.isInductive) {
+	  for (int i = 0; i < k; i++) {
+	    traces.push_back(chcIndex);
+	    indexToInv[traces.size()-1] = r.srcRelation;
+	  }
+	} else if (r.isQuery) {
+	  chcIndex++;
+	  continue;
+	} else {
+	  //fact or non-inductive clauses
+	  traces.push_back(chcIndex++);
+	}
+      }
+
+      Expr unrolledTr = toExpr(traces);
+
+      m_smt_solver.reset();
+      m_smt_solver.assertExpr(unrolledTr);
+
+      if (!m_smt_solver.solve()) {
+	cout << unrolledTr << " found to be unsat with k = " << k << endl;
+	return false;
+      }
+
+      ZSolver<EZ3>::Model m = m_smt_solver.getModel();
+
+      for (int bvIndex = 0; bvIndex < bindVars.size(); bvIndex++) {
+	auto invItr = indexToInv.find(bvIndex);
+	if (invItr == indexToInv.end()) {
+	  continue;
+	}
+	
+	auto vars = bindVars[bvIndex];
+	vector<int> model;
+	for (auto var : vars) {
+	  int value;
+	  if (var != m.eval(var)) {
+	    stringstream tmpstream;
+	    tmpstream << m.eval(var);
+	    tmpstream >> value;
+	  } else {
+	    value = guessUniformly(1000)-500;
+	  }
+	  model.push_back(value);
+	}
+	models[invItr->second].push_back(model);
+      }
+
+      return true;
+    }
+    
+    bool unrollAndExecute(const Expr & invRel, ufo::ZSolver<ufo::EZ3> & m_smt_solver, vector<vector<int> > & models, int k = 10, Expr initCondn = nullptr)
     {
 
       int initIndex;
+      int trIndex;
       bool initFound = false;
 
-      for (int i = 0; i < trIndex; i++) {
+      for (int i = 0; i < ruleManager.chcs.size(); i++) {
         auto & r = ruleManager.chcs[i];
         if (r.isFact) {
 	  initIndex = i;
 	  initFound = true;
+	}
+	if (r.isInductive && r.srcRelation == invRel && r.dstRelation == invRel) {
+	  trIndex = i;
 	}
       }
 

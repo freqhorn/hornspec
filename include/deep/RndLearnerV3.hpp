@@ -332,27 +332,19 @@ namespace ufo
       int fileIndex = 0;
       for (auto & dcl : decls) {
         DataLearner dl(ruleManager, m_z3);
-        dl.initialize(dcl);
+        dl.initialize(dcl, true /*multipleLoops*/);
         string filename("");
         if (fileIndex < behaviorfiles.size()) {
           filename = behaviorfiles[fileIndex];
           fileIndex++;
         }
-        if (!dl.computeData(filename)) return;
+        if (!dl.computeData(filename)) continue;
         (void)dl.computePolynomials(cands[dcl]);
       }	  
     }
 #endif
 
     bool bootstrap(map<Expr, ExprSet>& cands, bool enableDataLearning, const vector<string> & behaviorfiles){
-      if (enableDataLearning) {
-#ifdef HAVE_ARMADILLO
-        getDataCandidates(cands, behaviorfiles);
-#else
-        outs() << "Skipping learning from data as required library(armadillo) not found\n";
-#endif
-      }
-
       // TODO: batching
       for (auto & dcl: decls) {
         for (auto & cand : cands[dcl]) {
@@ -431,6 +423,15 @@ namespace ufo
 
     map<Expr, ExprSet> cands;
     for (auto& dcl: ruleManager.decls) ds.initializeDecl(dcl);
+    
+    if (enableDataLearning) {
+#ifdef HAVE_ARMADILLO
+      getDataCandidates(cands, behaviorfiles);
+#else
+      outs() << "Skipping learning from data as required library(armadillo) not found\n";
+#endif
+    }
+
     for (auto& dcl: ruleManager.decls) ds.getSeeds(dcl->arg(0), cands);
     for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)]);
 
