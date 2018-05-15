@@ -245,7 +245,7 @@ namespace ufo
       
       cur_col = rowToPivot(cur_row);
 
-      while (cur_row >= 0 && cur_row < input.n_rows) {
+      while (cur_row < input.n_rows) {
 
 	cur_col = rowToPivot(cur_row);
 
