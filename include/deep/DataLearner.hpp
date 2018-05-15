@@ -94,7 +94,7 @@ namespace ufo
 	return ptr->exprModels(inv, models);
       } else {
 	BndExpl bnd(rm);
-	return bnd.unrollAndExecute(inv, solver, models)
+	return bnd.unrollAndExecute(inv, solver, models);
       }
     }
     
@@ -120,7 +120,7 @@ namespace ufo
     ufo::ZSolver<ufo::EZ3> m_smt_solver;
 
     Expr inv;
-    bool multipleLoops
+    bool multipleLoops;
     unsigned int numVars;
     int trIndex;
     arma::mat dataMatrix;
