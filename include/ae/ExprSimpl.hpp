@@ -1924,13 +1924,14 @@ namespace ufo
     return disjoin(newDisjs, exp->getFactory());
   }
   
-  inline static void getLinCombCoefs(Expr ex, set<int>& intCoefs)
+  inline static bool getLinCombCoefs(Expr ex, set<int>& intCoefs)
   {
+    bool res = true;
     if (isOpX<OR>(ex))
     {
       for (auto it = ex->args_begin (), end = ex->args_end (); it != end; ++it)
-        getLinCombCoefs(*it, intCoefs);
-      }
+        res = res && getLinCombCoefs(*it, intCoefs);
+    }
     else if (isOp<ComparissonOp>(ex)) // assuming the lin.combination is on the left side
     {
       Expr lhs = ex->left();
@@ -1940,18 +1941,24 @@ namespace ufo
         {
           if (isOpX<MULT>(*it))           // else, it is 1, and we will add it anyway;
           {
-            intCoefs.insert(lexical_cast<int> ((*it)->left()));
+            if (isOpX<MPZ>((*it)->left()))
+              intCoefs.insert(lexical_cast<int> ((*it)->left()));
+            else return false;
           }
         }
       }
+      else if (isOpX<MULT>(lhs))
+      {
+        if (isOpX<MPZ>(lhs->left()))
+          intCoefs.insert(lexical_cast<int> (lhs->left()));
+        else return false;
+      }
       else
       {
-        if (isOpX<MULT>(lhs))
-        {
-          intCoefs.insert(lexical_cast<int> (lhs->left()));
-        }
+        return false;
       }
     }
+    return res;
   }
 
   inline static void getLinCombConsts(Expr ex, set<int>& intConsts)
@@ -2168,12 +2175,8 @@ namespace ufo
               (av[1] == srcVars[i] && av[0] == dstVars[i]))
           {
             set<int> coefs;
-            try
-            {
-              exp = normalizeAtom(exp, av);
-              getLinCombCoefs(exp, coefs);
-            }
-            catch (const boost::bad_lexical_cast& e) { continue; }
+            exp = normalizeAtom(exp, av);
+            if (!getLinCombCoefs(exp, coefs)) continue;
 
             bool success = true;
             for (auto i : coefs) success = success && (i == -1 || i == 1);

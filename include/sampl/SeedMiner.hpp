@@ -65,23 +65,16 @@ namespace ufo
       }
 
       for (auto &a : extraVars) invVarsCstm.push_back(a.second);
+      tmpl = normalizeDisj(tmpl, invVarsCstm);
 
-      try
+      if (!isOpX<FALSE> (tmpl) && !isOpX<TRUE> (tmpl))
       {
-        tmpl = normalizeDisj(tmpl, invVarsCstm);
-
-        if (!isOpX<FALSE> (tmpl) && !isOpX<TRUE> (tmpl))
-        {
-          candidates.insert(tmpl);
-
-          // get int constants from the normalized candidate
-          ExprSet intConstsE;
-          expr::filter (tmpl, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
-
-          for (auto &a : intConstsE) intConsts.insert(lexical_cast<int>(a));
-          getLinCombCoefs(tmpl, intCoefs);
-        }
-      } catch (const boost::bad_lexical_cast& e) { /*TBD*/ }
+        // get int constants from the normalized candidate
+        ExprSet intConstsE;
+        expr::filter (tmpl, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
+        for (auto &a : intConstsE) intConsts.insert(lexical_cast<int>(a));
+        if (getLinCombCoefs(tmpl, intCoefs)) candidates.insert(tmpl);
+      }
     }
 
     void addSeed(Expr term)
