@@ -21,11 +21,11 @@
 
 (rule (=> 
     (and 
-	(FUN m n s t flag)
-	(= m1 (+ m 1))
-	(= n1 (+ n 1))
-	(= s1 (+ s m1))
-	(= t1 (+ t n1))
+        (FUN m n s t flag)
+        (= m1 (+ m 1))
+        (= n1 (+ n 1))
+        (= s1 (+ s m1))
+        (= t1 (+ t n1))
         (= t2 (ite (= flag 1) (+ t1 m1) t1))
     )
     (FUN m1 n1 s1 t2 flag)
@@ -43,7 +43,7 @@
 
 (rule (=> 
     (and 
-	(SAD x y)
+        (SAD x y)
         (<= y x)
         (or (= y1 (+ y 1)) (= y1 (+ y 2)))
     )

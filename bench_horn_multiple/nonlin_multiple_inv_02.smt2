@@ -10,7 +10,7 @@
 
 (rule (=> (> m 0) (PRE m)))
 
-(rule (=> (PRE m) (PRE m))) ; very stupid
+(rule (=> (and (PRE m) (= m1 (+ m 1))) (PRE m1)))
 
 (rule (=> (PRE m) (POST m m 1)))
 
