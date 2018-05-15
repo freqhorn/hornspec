@@ -289,6 +289,7 @@ namespace ufo
 	    traces.push_back(chcIndex);
 	    indexToInv[traces.size()-1] = r.srcRelation;
 	  }
+	  chcIndex++;
 	} else if (r.isQuery) {
 	  chcIndex++;
 	  continue;
