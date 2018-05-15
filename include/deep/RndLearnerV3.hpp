@@ -426,7 +426,7 @@ namespace ufo
     
     if (enableDataLearning) {
 #ifdef HAVE_ARMADILLO
-      getDataCandidates(cands, behaviorfiles);
+      ds.getDataCandidates(cands, behaviorfiles);
 #else
       outs() << "Skipping learning from data as required library(armadillo) not found\n";
 #endif
