@@ -344,14 +344,41 @@ namespace ufo
 	  std::stringstream coeffStream;
 	  coeffStream << std::fixed << basis(row,col);
 
-	  Expr abstractCoeff = nullptr;
-	  if (!allowedPolyCoefficient(basis(row,col), abstractCoeff)) {
-	    continue;
-	  }
+	  Expr abstractVar = nullptr;
+          if (!allowedPolyCoefficient(basis(row,col), abstractVar)) {
+            continue;
+          }
 
-	  Expr mult;
-	  if (abstractCoeff != nullptr) {
-	    mult = mk<MULT>(abstractCoeff, monomialToExpr[row]);
+          Expr mult;
+          if (abstractVar != nullptr) {
+            Expr monomialExpr = monomialToExpr[row];
+            if (!isNumericConst(monomialExpr)) {
+              mult = mk<MULT>(abstractVar, monomialExpr);
+            } else {
+              int monomialInt = lexical_cast<int>(monomialExpr);
+              //assumption is that abstractVar will be of the form intConst * var or var * intConst                                            
+              bool success = true;
+              Expr var = nullptr;
+              int varCoeff = 1;
+              if (!isOpX<MULT>(abstractVar)) {
+                success = false;
+              } else {
+                for (auto it = abstractVar->args_begin(), end = abstractVar->args_end(); it != end; ++it) {
+                  if (isNumericConst(*it)) {
+                    varCoeff = lexical_cast<int>(*it);
+                  } else if (bind::isIntConst(*it)) {
+                    var = *it;
+                  } else {
+                    success = false;
+                  }
+                }
+              }
+              if (!success || var == nullptr) {
+                mult = mk<MULT>(abstractVar, monomialExpr);
+              } else {
+                mult = mk<MULT>(mkTerm(mpz_class(varCoeff*monomialInt), m_efac), var);
+              }
+	    }
 	  } else {
 	    int coeff;
 	    coeffStream >> coeff;
