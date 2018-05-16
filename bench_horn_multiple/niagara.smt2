@@ -8,13 +8,12 @@
 
 (declare-rel fail ())
 
-
 (rule (=> (and (= x1 0) (= y1 0)) (itp1 x1 y1)))
 
 (rule (=> 
     (and 
-	(itp1 x1 y1)
-        (< y1 10)
+        (itp1 x1 y1)
+        (< y1 100000)
         (= x2 (+ x1 1))
         (= y2 (+ y1 x2))
     )
@@ -23,25 +22,18 @@
 )
 
 (rule (=> (and (itp1 x1 y1) 
-               (= y1 10) 
-               (= x2 (+ x1 1))
-               (= y2 (+ y1 x2))) 
-          (itp2 x2 y2)))
-
-
-(rule (=> (and (itp1 x1 y1) 
-               (= y1 10) 
+               (= y1 100000)
                (= x2 (+ x1 2))
                (= y2 (+ y1 x2))) 
           (itp2 x2 y2)))
 
 
-(rule (=> (and (itp1 x1 y1) (< y1 10) (> x1 y1)) fail))
+(rule (=> (and (itp1 x1 y1) (< y1 100000) (> x1 y1)) fail))
 
 (rule (=> 
     (and 
-	(itp2 x1 y1)
-        (> y1 10)
+        (itp2 x1 y1)
+        (> y1 100000)
         (= x2 (+ x1 1))
         (= y2 (+ y1 x2))
 
@@ -54,4 +46,3 @@
 
 
 (query fail :print-certificate true)
-

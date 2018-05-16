@@ -17,8 +17,8 @@
 
 (rule (=> 
     (and 
-	(NEST i j k n)
-	(<= j (- i 1))
+        (NEST i j k n)
+        (<= j (- i 1))
         (= k1 (+ k (- i j)))
         (= j1 (+ j 1))
     )

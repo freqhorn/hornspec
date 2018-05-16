@@ -17,9 +17,9 @@
 
 (rule (=> 
     (and 
-	(NEST x y i j)
-	(= i1 (ite (= x y) (+ i 1) i))
-	(= j1 (ite (= x y) j (+ j 1)))
+      (NEST x y i j)
+      (= i1 (ite (= x y) (+ i 1) i))
+      (= j1 (ite (= x y) j (+ j 1)))
     )
     (NEST x y i1 j1)
   )

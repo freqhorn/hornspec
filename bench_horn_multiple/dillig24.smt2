@@ -19,9 +19,9 @@
 
 (rule (=> 
     (and 
-	(WEEE i j k n)
+        (WEEE i j k n)
         (< k n)
-	(= k1 (+ k 1))
+        (= k1 (+ k 1))
     )
     (WEEE i j k1 n)
   )

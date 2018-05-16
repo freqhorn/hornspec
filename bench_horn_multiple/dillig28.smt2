@@ -12,9 +12,9 @@
 
 (rule (=> 
     (and 
-	(FUN x y n)
-	(= x1 (+ x 1))
-	(= y1 (+ y 1))
+        (FUN x y n)
+        (= x1 (+ x 1))
+        (= y1 (+ y 1))
     )
     (FUN x1 y1 n)
   )
@@ -24,10 +24,10 @@
 
 (rule (=> 
     (and 
-	(SAD x y n)
-	(or (<= x (- n 1)) (>= x (+ n 1)))
-	(= x1 (- x 1))
-	(= y1 (- y 1))
+        (SAD x y n)
+        (or (<= x (- n 1)) (>= x (+ n 1)))
+        (= x1 (- x 1))
+        (= y1 (- y 1))
     )
     (SAD x1 y1 n)
   )
