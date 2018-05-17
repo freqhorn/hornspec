@@ -92,7 +92,7 @@ int main (int argc, char ** argv)
         " " << OPT_BATCH << "                         threshold for how many candidates to check at once\n" <<
       " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n" <<
       " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
-      " " << OPT_DATA_INPUT << "                             name of the file which contains behaviors; can be specified multiple times for each invariant \n"; 
+      " " << OPT_DATA_INPUT << "                    name of the file which contains behaviors; can be specified multiple times for each invariant \n"; 
     
     
     return 0;
