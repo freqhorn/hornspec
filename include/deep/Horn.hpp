@@ -100,6 +100,8 @@ namespace ufo
 
     Expr failDecl;
     vector<HornRuleExt> chcs;
+    vector<HornRuleExt*> wtoCHCs;
+    ExprVector wtoDecls;
     ExprSet decls;
     map<Expr, ExprVector> invVars;
     map<Expr, vector<int>> outgs;
@@ -270,6 +272,8 @@ namespace ufo
           }
         }
       }
+
+      wtoSort();
     }
 
     void addRule (HornRuleExt* r)
@@ -319,6 +323,57 @@ namespace ufo
         if (emptyIntersect(a, hr->dstVars) && emptyIntersect(a, hr->locVars)) newCnjs.insert(a);
       }
       return conjoin(newCnjs, m_efac);
+    }
+
+    void wtoSort()
+    {
+      if (wtoCHCs.size() > 0)
+      {
+        outs () << "Already sorted\n";
+        return;
+      }
+
+      int r1 = 0;
+      for (auto & hr : chcs)
+        if (hr.isInductive)
+        {
+          wtoDecls.push_back(hr.srcRelation);
+          wtoCHCs.push_back(&hr);
+        }
+      int r2 = wtoDecls.size();
+
+      while (r1 != r2)
+      {
+        for (int i = r1; i < r2; i++)
+        {
+          auto dcl = wtoDecls[i];
+          for (auto &hr : chcs)
+          {
+            if (find(wtoCHCs.begin(), wtoCHCs.end(), &hr) != wtoCHCs.end()) continue;
+
+            if (hr.srcRelation == dcl)
+            {
+              wtoDecls.push_back(hr.dstRelation);
+              wtoCHCs.push_back(&hr);
+            }
+            else if (hr.dstRelation == dcl)
+            {
+              wtoDecls.push_back(hr.srcRelation);
+              wtoCHCs.push_back(&hr);
+            }
+          }
+        }
+        r1 = r2;
+        r2 = wtoDecls.size();
+      }
+      assert(wtoCHCs.size() == chcs.size());
+
+      // filter wtoDecls
+      for (auto it = wtoDecls.begin(); it != wtoDecls.end();)
+      {
+        if (*it == failDecl || isOpX<TRUE>(*it)) it = wtoDecls.erase(it);
+        else ++it;
+      }
     }
 
     // Transformations
