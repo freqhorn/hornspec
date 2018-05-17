@@ -11,64 +11,51 @@ using namespace std;
 using namespace boost;
 namespace ufo
 {
-  class RndLearnerV3 : public RndLearner
+  class RndLearnerV3 : public RndLearnerV2
   {
     private:
 
     ExprSet checked;
-    map<int, Expr> candidates;
+    map<int, ExprVector> candidates;
+    int updCount = 1;
 
     public:
 
     RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, bool freqs, bool aggp) :
-      RndLearner (efac, z3, r, /*k-induction*/ false, freqs, /*epsilon*/ true, aggp){}
+      RndLearnerV2 (efac, z3, r, freqs, aggp){}
 
     bool checkInit(int invNum, Expr rel)
     {
-      for (int i = 0; i < ruleManager.chcs.size(); i++)
-      {
-        auto & a = ruleManager.chcs[i];
-        if (a.isFact && a.dstRelation == rel)
-        {
-          bool res = checkCHC(a);
-          if (!res)
-          {
-            ExprVector invVars;
-            for (auto & a : invarVars[invNum]) invVars.push_back(a.second);
-            Expr failedCand = normalizeDisj(candidates[invNum], invVars);
-            SamplFactory& sf = sfs[invNum].back();
-            Sampl& s = sf.exprToSampl(failedCand);
-            sf.assignPrioritiesForFailed();
-          }
-          return res;
-        }
-      }
-      return true;
-    }
-
-    bool checkAllAdjacent(Expr rel)
-    {
+      vector<HornRuleExt*> adjacent;
       for (auto &hr: ruleManager.chcs)
       {
-        if ((  (hr.srcRelation == rel &&
-              find(checked.begin(), checked.end(), hr.dstRelation) != checked.end())
-            || (hr.dstRelation == rel &&
-              find(checked.begin(), checked.end(), hr.srcRelation) != checked.end())))
-          if (!hr.isQuery && !checkCHC(hr)) return false; // TODO: use this knowledge somehow
+        if (hr.isFact && hr.dstRelation == rel)
+        {
+          adjacent.push_back(&hr);
+        }
       }
-      return true;
+      if (adjacent.empty()) return true;
+      return multiHoudini(adjacent);
     }
 
     bool checkInductiveness(Expr rel)
     {
+      vector<HornRuleExt*> adjacent;
       for (auto &hr: ruleManager.chcs)
       {
+        bool checkedSrc = find(checked.begin(), checked.end(), hr.srcRelation) != checked.end();
+        bool checkedDst = find(checked.begin(), checked.end(), hr.dstRelation) != checked.end();
         if ((hr.srcRelation == rel && hr.dstRelation == rel) ||
-            (hr.srcRelation == rel && find(checked.begin(), checked.end(), hr.dstRelation) != checked.end()) ||
-            (hr.dstRelation == rel && find(checked.begin(), checked.end(), hr.srcRelation) != checked.end()))
-          if (!hr.isQuery && !checkCHC(hr)) return false;
+            (hr.srcRelation == rel && checkedDst) ||
+            (hr.dstRelation == rel && checkedSrc) ||
+            (checkedSrc && checkedDst) ||
+            (hr.isFact && checkedDst))
+        {
+          if (!hr.isQuery) adjacent.push_back(&hr);
+        }
       }
-      return true;
+      if (adjacent.empty()) return true;
+      return multiHoudini(adjacent);
     }
 
     Expr eliminateQuantifiers(Expr formula, ExprVector& varsRenameFrom, int invNum)
@@ -90,19 +77,15 @@ namespace ufo
       return mk<TRUE>(m_efac);
     }
 
-    bool getCandForAdjacentRel(Expr candToProp, Expr constraint, ExprVector& varsRenameFrom, Expr rel)
+    bool getCandForAdjacentRel(Expr candToProp, Expr constraint, ExprVector& varsRenameFrom, Expr rel, bool seed)
     {
       Expr formula = mk<AND>(candToProp, constraint);
+      if (!u.isSat(formula)) return false; // sometimes, maybe we should return true.
+
       if (findNonlin(formula))
       {
-        // Currently unsupported,
-        // Cannot propagate anything,
-        // So simply try checking if "TRUE" is OK
-        if (checkAllAdjacent(rel)){
-          checked.insert(rel);
-          return true;
-        }
-        return false;
+        checked.insert(rel);
+        return true;
       }
 
       ExprSet dsjs;
@@ -115,86 +98,86 @@ namespace ufo
 
       Expr newCand = disjoin(newSeedDsjs, m_efac);
 
-      // reserve
-      ExprSet checkedTmp = checked;
-      map<int, Expr> candidatesTmp = candidates;
-
-      if (!isOpX<TRUE>(newCand))
+      if (seed)
       {
         ExprSet cnjs;
+        ExprSet newCnjs;
         getConj(newCand, cnjs);
-        bool resFinal = false;
-        if (cnjs.size() > 1)
+        for (auto & cnd : cnjs)
         {
-          resFinal = false;
-          for (auto & a : cnjs) // TODO: Houdini style
-          {
-            candidates[invNum] = a;
-            if (!checkAllAdjacent(rel)) {
-              candidates = candidatesTmp;
-              continue;
-            }
-
-            bool res = checkCand(invNum, a);
-            if (res)
-            {
-              checkedTmp = checked;
-              candidatesTmp = candidates;
-            }
-            else
-            {
-              checked = checkedTmp;
-              candidates = candidatesTmp;
-            }
-            resFinal = resFinal || res;
-          }
-        }
-        else
-        {
-          resFinal = checkCand(invNum, newCand);
+          if (hasUnsupportedSymbs(cnd)) continue;
+          newCnjs.insert(cnd);
+          addCandidate(invNum, cnd);
         }
 
-        if (resFinal) return true;
-        checked = checkedTmp;
-        candidates = candidatesTmp;
-        if (checkAllAdjacent(rel)){
-          checked.insert(rel);
-          return true;
-        }
-        return false;
+        newCand = conjoin(newCnjs, m_efac);
+        checked.insert(rel);
+        return propagate(invNum, newCand, true);
       }
-      else return true;
+      else
+      {
+        if (!isOpX<TRUE>(newCand))
+        {
+          ExprSet cnjs;
+          getConj(newCand, cnjs);
+          for (auto & a : cnjs) addCandidate(invNum, a);
+
+          return checkCand(invNum);
+        }
+        else return true;
+      }
     }
 
-    // similar to getCandForAdjacentRel, but not recursive
-    Expr getSeedsByQE(Expr candToProp, Expr constraint, ExprVector& varsRenameFrom, Expr rel)
+    // temporary workaround
+    bool hasUnsupportedSymbs(Expr e)
     {
-      Expr formula = mk<AND>(candToProp, constraint);
-      if (findNonlin(formula)) return mk<TRUE>(m_efac);
-      ExprSet dsjs;
-      getDisj(candToProp, dsjs);
-      ExprSet newSeedDsjs;
-      for (auto & d : dsjs)
-        newSeedDsjs.insert(eliminateQuantifiers(mk<AND>(d, constraint), varsRenameFrom, getVarIndex(rel, decls)));
-
-      return disjoin(newSeedDsjs, m_efac);
+      ExprSet artif;
+      expr::filter (e, bind::IsConst(), std::inserter (artif, artif.begin ()));
+      for (auto & a : artif)
+      {
+        if (lexical_cast<string>(a).substr(0, 5) == "__e__") return true;
+      }
+      return false;
     }
 
-    // TODO: try propagating learned lemmas too
-    bool propagate(int invNum, Expr cand)
+    void addCandidate(int invNum, Expr cnd)
+    {
+      for (auto & a : candidates[invNum])
+      {
+        if (u.isEquiv(a, cnd)) return;
+      }
+      candidates[invNum].push_back(cnd);
+    }
+
+    bool propagate(int invNum, Expr cand, bool seed)
     {
       bool res = true;
       Expr rel = decls[invNum];
+
       for (auto & hr : ruleManager.chcs)
       {
-        if (hr.srcRelation == hr.dstRelation) continue;
+        if (hr.srcRelation == hr.dstRelation || hr.isQuery) continue;
+
+        // adding lemmas to the body. GF: not sure if it helps
+        Expr constraint = hr.body;
+        SamplFactory& sf2 = sfs[getVarIndex(hr.dstRelation, decls)].back();
+        Expr lm2 = sf2.getAllLemmas();
+        for (auto & v : invarVars[getVarIndex(hr.dstRelation, decls)])
+          lm2 = replaceAll(lm2, v.second, hr.dstVars[v.first]);
+        constraint = mk<AND>(constraint, lm2);
+
+        if (!hr.isFact)
+        {
+          SamplFactory& sf1 = sfs[getVarIndex(hr.srcRelation, decls)].back();
+          constraint = mk<AND>(constraint, sf1.getAllLemmas());
+        }
 
         // forward:
-        if (hr.srcRelation == rel && find(checked.begin(), checked.end(), hr.dstRelation) == checked.end() && !hr.isQuery)
+        if (hr.srcRelation == rel && find(checked.begin(), checked.end(), hr.dstRelation) == checked.end())
         {
           Expr replCand = cand;
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.srcVars[v.first]);
-          res = res && getCandForAdjacentRel (replCand, hr.body, hr.dstVars, hr.dstRelation);
+          res = res && getCandForAdjacentRel (replCand, constraint, hr.dstVars, hr.dstRelation, seed);
         }
 
         // backward (very similarly):
@@ -202,110 +185,191 @@ namespace ufo
         {
           Expr replCand = cand;
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.dstVars[v.first]);
-          res = res && getCandForAdjacentRel (replCand, hr.body, hr.srcVars, hr.srcRelation);
+          res = res && getCandForAdjacentRel (replCand, constraint, hr.srcVars, hr.srcRelation, seed);
         }
       }
       return res;
     }
 
-    bool checkCand(int curInv, Expr cand)
+    bool checkCand(int invNum)
     {
-      Expr rel = decls[curInv];
-//      outs () << "  -- cand for " << *rel << ": " << *cand << "\n";
-      candidates[curInv] = cand;
-      if (!checkInit(curInv, rel)) return false;
+      Expr rel = decls[invNum];
+//            outs () << "  -- checkCand for " << *rel << ": " << *conjoin(candidates[invNum], m_efac) << "\n";
+      if (!checkInit(invNum, rel)) return false;
       if (!checkInductiveness(rel)) return false;
 
       checked.insert(rel);
-      return propagate(curInv, cand);
+      return propagate(invNum, conjoin(candidates[invNum], m_efac), false);
     }
 
-    bool learn (int curInv, Expr cand)
+    void assignPrioritiesForLearned()
     {
-      if (checkCand(curInv, cand))
+      bool progress = true;
+      for (auto & cand : candidates)
       {
-        for (auto & a : candidates)
+        if (cand.second.size() > 0)
         {
-          if (a.second != NULL && !isOpX<TRUE>(a.second))
+          ExprVector invVars;
+          SamplFactory& sf = sfs[cand.first].back();
+          for (auto & a : invarVars[cand.first]) invVars.push_back(a.second);
+          for (auto & b : cand.second)
           {
-            SamplFactory& sf = sfs[a.first].back();
-            sf.learnedExprs.insert(a.second); // TODO: split conjunctions
-//            outs() << "     lemmas learned for " << *decls[a.first] << ": " << *a.second << "\n";
-          }
-        }
-
-        if (checkAllLemmas(false))
-        {
-          return true;
-        }
-        else
-        {
-          for (auto & a : candidates)
-          {
-            if (a.second != NULL && !isOpX<TRUE>(a.second))
+            Expr learnedCand = normalizeDisj(b, invVars);
+            SamplFactory& sf = sfs[cand.first].back();
+            Sampl& s = sf.exprToSampl(learnedCand);
+            sf.assignPrioritiesForLearned();
+            if (!u.implies(sf.getAllLemmas(), learnedCand))
             {
-              ExprVector invVars;
-              for (auto & a : invarVars[curInv]) invVars.push_back(a.second);
-              Expr learnedCand = normalizeDisj(cand, invVars);
-              SamplFactory& sf = sfs[a.first].back();
-              Sampl& s = sf.exprToSampl(learnedCand);  // TODO: split conjunctions
-              sf.assignPrioritiesForLearned();
+              sf.learnedExprs.insert(learnedCand);
+//              outs() << "     lemmas learned for " << *decls[cand.first] << ": " << *learnedCand << "\n";
             }
+            else progress = false;
           }
         }
       }
-      return false;
+      //      if (progress) updateGrammars(); // GF: doesn't work great :(
     }
 
     void synthesize(int maxAttempts, char * outfile)
     {
-      int curInv = 0;
+      ExprSet cands;
       for (int i = 0; i < maxAttempts; i++)
       {
+        // next cand (to be sampled)
+        // TODO: find a smarter way to calculate; make parametrizable
+        int invNum = getVarIndex(ruleManager.wtoDecls[i % ruleManager.wtoDecls.size()], decls);
         checked.clear();
         candidates.clear();
-        SamplFactory& sf = sfs[curInv].back();
+        SamplFactory& sf = sfs[invNum].back();
         Expr cand = sf.getFreshCandidate();
         if (cand == NULL) continue;
 
-        if (learn(curInv, cand))
+        addCandidate(invNum, cand);
+        if (checkCand(invNum))
         {
-          outs () << "Success after " << (i+1) << " iterations\n";
-          return;
+          assignPrioritiesForLearned();
+          if (checkAllLemmas())
+          {
+            outs () << "Success after " << (i+1) << " iterations\n";
+            return;
+          }
         }
-
-        // next cand (to be sampled)
-        curInv = (curInv + 1) % invNumber;
-        // just natural order; TODO: find a smarter way to calculate; make parametrizable
       }
     }
 
-    // similar to propagate, but not recursive and w/o checking
-    void propagateSeeds(int invNum, Expr cand, map<Expr, ExprSet>& cands)
+    bool splitUnsatSets(ExprVector & src, ExprVector & dst1, ExprVector & dst2)
     {
-      Expr rel = decls[invNum];
-      for (auto & hr : ruleManager.chcs)
+      if (u.isSat(conjoin(src, m_efac))) return false;
+
+      for (auto & a : src) dst1.push_back(a);
+
+      for (auto it = dst1.begin(); it != dst1.end(); )
       {
-        if (hr.srcRelation == hr.dstRelation) continue;
+        dst2.push_back(*it);
+        it = dst1.erase(it);
+        if (u.isSat(conjoin(dst1, m_efac))) break;
+      }
 
-        if (hr.srcRelation == rel && find(checked.begin(), checked.end(), hr.dstRelation) == checked.end() && !hr.isQuery)
-        {
-          Expr replCand = cand;
-          for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.srcVars[v.first]);
-          Expr newcand = getSeedsByQE (replCand, hr.body, hr.dstVars, hr.dstRelation);
-//          outs () << " propagated seed for " << *hr.dstRelation << ": " << *newcand << "\n";
-          cands[hr.dstRelation].insert(newcand);
-        }
+      // now dst1 is SAT, try to get more things from dst2 back to dst1
 
-        if (hr.dstRelation == rel && find(checked.begin(), checked.end(), hr.srcRelation) == checked.end() && !hr.isFact)
+      for (auto it = dst2.begin(); it != dst2.end(); )
+      {
+        if (!u.isSat(conjoin(dst1, m_efac), *it)) { ++it; continue; }
+        dst1.push_back(*it);
+        it = dst2.erase(it);
+      }
+
+      return true;
+    }
+
+    bool filterUnsat()
+    {
+      vector<HornRuleExt*> worklist;
+      for (int i = 0; i < invNumber; i++)
+      {
+        if (!u.isSat(conjoin(candidates[i], m_efac)))
         {
-          Expr replCand = cand;
-          for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.dstVars[v.first]);
-          Expr newcand = getSeedsByQE (replCand, hr.body, hr.srcVars, hr.srcRelation);
-//          outs () << " propagated seed for " << *hr.srcRelation << ": " << *newcand << "\n";
-          cands[hr.srcRelation].insert(newcand);
+          for (auto & hr : ruleManager.chcs)
+          {
+            if (hr.dstRelation == decls[i]) worklist.push_back(&hr);
+          }
         }
       }
+
+      // basically, just checks initiation and immediately removes bad candidates
+      multiHoudini(worklist, false);
+
+      for (int i = 0; i < invNumber; i++)
+      {
+        if (!u.isSat(conjoin(candidates[i], m_efac)))
+        {
+          ExprVector tmp;
+          ExprVector stub; // TODO: try greedy search, maybe some lemmas are in stub?
+          splitUnsatSets(candidates[i], tmp, stub);
+          candidates[i] = tmp;
+        }
+      }
+
+      return true;
+    }
+
+    bool multiHoudini(vector<HornRuleExt*> worklist, bool recur = true)
+    {
+      if (!anyProgress(worklist)) return false;
+
+      map<int, ExprVector> candidatesTmp = candidates;
+      bool res1 = true;
+      for (auto &h: worklist)
+      {
+        HornRuleExt& hr = *h;
+
+        if (hr.isQuery) continue;
+
+        if (!checkCHC(hr, candidatesTmp))
+        {
+          bool res2 = true;
+          Expr model = getModel(hr.dstVars);
+          int ind = getVarIndex(hr.dstRelation, decls);
+          ExprVector& ev = candidatesTmp[ind];
+
+          ExprVector invVars;
+          for (auto & a : invarVars[ind]) invVars.push_back(a.second);
+          SamplFactory& sf = sfs[ind].back();
+
+          for (auto it = ev.begin(); it != ev.end(); )
+          {
+            Expr repl = *it;
+            for (auto & v : invarVars[ind]) repl = replaceAll(repl, v.second, hr.dstVars[v.first]);
+
+            if (!u.isSat(model, repl))
+            {
+              if (hr.isFact)
+              {
+                Expr failedCand = normalizeDisj(*it, invVars);
+//                outs () << "failed cand for " << *hr.dstRelation << ": " << *failedCand << "\n";
+                Sampl& s = sf.exprToSampl(failedCand);
+                sf.assignPrioritiesForFailed();
+              }
+              it = ev.erase(it);
+              res2 = false;
+            }
+            else
+            {
+              ++it;
+            }
+          }
+
+          if (recur && !res2)
+          {
+            res1 = false;
+            break;
+          }
+        }
+      }
+      candidates = candidatesTmp;
+      if (!recur) return false;
+      if (res1) return anyProgress(worklist);
+      else return multiHoudini(worklist);
     }
 
     // adapted from doSeedMining
@@ -313,18 +377,42 @@ namespace ufo
     {
       int ind = getVarIndex(invRel, decls);
       SamplFactory& sf = sfs[ind].back();
+      ExprSet candsFromCode;
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
         SeedMiner sm (hr, invRel, invarVars[ind], sf.lf.nonlinVars);
         sm.analyzeCode();
-        for (auto &cand : sm.candidates)
+        for (auto &cand : sm.candidates) candsFromCode.insert(cand);
+      }
+
+      for (auto & cand : candsFromCode)
+      {
+        checked.clear();
+        propagate (getVarIndex(invRel, decls), cand, true);
+      }
+
+      for (auto & a : candidates)
+      {
+        cands[decls[a.first]].insert(a.second.begin(), a.second.end());
+      }
+    }
+
+    bool anyProgress(vector<HornRuleExt*> worklist)
+    {
+      bool res = false;
+      for (int i = 0; i < invNumber; i++)
+      {
+        // simple check if there is a non-empty candidate
+        for (auto & hr : worklist)
         {
-//          outs () << "seed for " << *invRel << ": " << *cand << "\n";
-          cands[invRel].insert(cand);
-          propagateSeeds(ind, cand, cands);
+          if (hr->srcRelation == decls[i] || hr->dstRelation == decls[i])
+          {
+            if (candidates[i].size() > 0) return true;
+          }
         }
       }
+      return res;
     }
 
 #ifdef HAVE_ARMADILLO
@@ -340,31 +428,50 @@ namespace ufo
         }
         if (!dl.computeData(filename)) continue;
         (void)dl.computePolynomials(cands[dcl]);
-      }	  
+      }
     }
 #endif
 
     bool bootstrap(map<Expr, ExprSet>& cands, bool enableDataLearning, const vector<string> & behaviorfiles){
-      // TODO: batching
-      for (auto & dcl: decls) {
-        for (auto & cand : cands[dcl]) {
-          checked.clear();
-          candidates.clear();
-          if (learn(getVarIndex(dcl, decls), cand)) {
-            outs () << "Success after bootstrapping\n";
-            return true;
-          }
+
+      for (int i = 0; i < invNumber; i++)
+      {
+        for (auto & cnd : cands[decls[i]]) addCandidate(i, cnd);
+      }
+
+      filterUnsat();
+
+      if (multiHoudini(ruleManager.wtoCHCs))
+      {
+        assignPrioritiesForLearned();
+        if (checkAllLemmas())
+        {
+          outs () << "Success after bootstrapping\n";
+          return true;
         }
       }
       return false;
     }
 
-    bool checkAllLemmas(bool addCand = true)
+    void updateGrammars()
+    {
+      // convert candidates to curCandidates and run the method from RndLearner
+      for (int ind = 0; ind < invNumber; ind++)
+      {
+        if (candidates[ind].size() == 0) curCandidates[ind] = mk<TRUE>(m_efac);
+        else curCandidates[ind] = conjoin(candidates[ind], m_efac);
+      }
+      updateRels();
+      updCount++;
+    }
+
+    bool checkAllLemmas()
     {
       candidates.clear();
-      for (auto &hr: ruleManager.chcs)
+      for (int i = ruleManager.wtoCHCs.size() - 1; i >= 0; i--)
       {
-        if (!checkCHC(hr, addCand)) {
+        auto & hr = *ruleManager.wtoCHCs[i];
+        if (!checkCHC(hr, candidates)) {
           if (!hr.isQuery)
             assert(0);    // only queries are allowed to fail
           else
@@ -374,7 +481,7 @@ namespace ufo
       return true;
     }
 
-    bool checkCHC (HornRuleExt& hr, bool addCand = true)
+    bool checkCHC (HornRuleExt& hr, map<int, ExprVector>& annotations)
     {
       m_smt_solver.reset();
       m_smt_solver.assertExpr (hr.body);
@@ -384,7 +491,7 @@ namespace ufo
         int ind = getVarIndex(hr.srcRelation, decls);
         SamplFactory& sf = sfs[ind].back();
         Expr lmApp = sf.getAllLemmas();
-        if (addCand && candidates[ind] != NULL) lmApp = mk<AND>(lmApp, candidates[ind]);
+        if (annotations[ind].size() > 0) lmApp = mk<AND>(lmApp, conjoin(annotations[ind], m_efac));
         for (auto & v : invarVars[ind]) lmApp = replaceAll(lmApp, v.second, hr.srcVars[v.first]);
         m_smt_solver.assertExpr(lmApp);
       }
@@ -394,7 +501,7 @@ namespace ufo
         int ind = getVarIndex(hr.dstRelation, decls);
         SamplFactory& sf = sfs[ind].back();
         Expr lmApp = sf.getAllLemmas();
-        if (addCand && candidates[ind] != NULL) lmApp = mk<AND>(lmApp, candidates[ind]);
+        if (annotations[ind].size() > 0) lmApp = mk<AND>(lmApp, conjoin(annotations[ind], m_efac));
         for (auto & v : invarVars[ind]) lmApp = replaceAll(lmApp, v.second, hr.dstVars[v.first]);
         m_smt_solver.assertExpr(mk<NEG>(lmApp));
       }
@@ -412,13 +519,11 @@ namespace ufo
     ruleManager.parse(smt);
     RndLearnerV3 ds(m_efac, z3, ruleManager, freqs, aggp);
 
-    ds.setupSafetySolver();
-    std::srand(std::time(0));
-
-    if (ruleManager.decls.size() <= 1)
+    if (ruleManager.decls.size() == 1)
     {
-      outs() << "This is an experimental thing for multiple invariants.\nFor a single invariant synthsis, run --v1 or --v2.\n";
-      return;
+      outs() << "WARNING.\n" <<
+                "This is an experimental thing for multiple invariants.\n" <<
+                "For a single invariant synthsis, we suggest to use the --v2 option.\n";
     }
 
     map<Expr, ExprSet> cands;
@@ -431,12 +536,11 @@ namespace ufo
       outs() << "Skipping learning from data as required library(armadillo) not found\n";
 #endif
     }
-
     for (auto& dcl: ruleManager.decls) ds.getSeeds(dcl->arg(0), cands);
     for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)]);
-
     ds.calculateStatistics();
     if (ds.bootstrap(cands, enableDataLearning, behaviorfiles)) return;
+    std::srand(std::time(0));
     ds.synthesize(maxAttempts, outfile);
   }
 }
