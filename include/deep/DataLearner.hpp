@@ -159,7 +159,7 @@ namespace ufo
     computeMonomial(arma::mat data)
     {
       arma::mat monomialMatrix;
-      
+      monomialMatrix.fill(0);
       if (curPolyDegree == 1) {
 	monomialMatrix.set_size(dataMatrix.n_rows, dataMatrix.n_cols);
 	for (int i = 0; i < dataMatrix.n_rows; i++) {
@@ -274,6 +274,7 @@ namespace ufo
       }
 	  
       arma::mat basis(input.n_cols, independentVars.size());
+      basis.fill(0);
       unsigned int basis_col = 0;
   
       for (auto indVar : independentVars) {
@@ -350,8 +351,8 @@ namespace ufo
           }
 
           Expr mult;
-          if (abstractVar != nullptr) {
-            Expr monomialExpr = monomialToExpr[row];
+          Expr monomialExpr = monomialToExpr[row];
+          if (abstractVar != nullptr && (isNumericConst(monomialExpr) || curPolyDegree > 1)) {
             if (!isNumericConst(monomialExpr)) {
               mult = mk<MULT>(abstractVar, monomialExpr);
             } else {
