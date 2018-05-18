@@ -53,7 +53,6 @@ namespace ufo
       for (auto & a : invVars) invVarsCstm.push_back(a.second);
 
       tmpl = disjoin (newDsjs, m_efac);
-      tmpl = findNonlinAndRewrite(tmpl, vars, invVarsCstm, extraVars);
 
       for (auto &v : actualVars)
       {
@@ -63,6 +62,8 @@ namespace ufo
           tmpl = replaceAll(tmpl, v, invVars[index]);
         }
       }
+
+      tmpl = findNonlinAndRewrite(tmpl, invVarsCstm, extraVars);
 
       for (auto &a : extraVars) invVarsCstm.push_back(a.second);
       tmpl = normalizeDisj(tmpl, invVarsCstm);

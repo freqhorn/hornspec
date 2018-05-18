@@ -67,6 +67,8 @@ namespace ufo
         if (find(varsRenameFrom.begin(), varsRenameFrom.end(), v) == varsRenameFrom.end())
           quantified.insert(v);
 
+      if (findNonlin(formula)) return simpleQE(formula, quantified);
+
       AeValSolver ae(mk<TRUE>(m_efac), formula, quantified);
       if (ae.solve())
       {
@@ -81,12 +83,6 @@ namespace ufo
     {
       Expr formula = mk<AND>(candToProp, constraint);
       if (!u.isSat(formula)) return false; // sometimes, maybe we should return true.
-
-      if (findNonlin(formula))
-      {
-        checked.insert(rel);
-        return true;
-      }
 
       ExprSet dsjs;
       getDisj(candToProp, dsjs);
@@ -105,14 +101,14 @@ namespace ufo
         getConj(newCand, cnjs);
         for (auto & cnd : cnjs)
         {
-          if (hasUnsupportedSymbs(cnd)) continue;
           newCnjs.insert(cnd);
           addCandidate(invNum, cnd);
         }
 
         newCand = conjoin(newCnjs, m_efac);
         checked.insert(rel);
-        return propagate(invNum, newCand, true);
+        if (isOpX<TRUE>(newCand)) return true;
+        else return propagate(invNum, newCand, true);
       }
       else
       {
@@ -121,23 +117,10 @@ namespace ufo
           ExprSet cnjs;
           getConj(newCand, cnjs);
           for (auto & a : cnjs) addCandidate(invNum, a);
-
           return checkCand(invNum);
         }
         else return true;
       }
-    }
-
-    // temporary workaround
-    bool hasUnsupportedSymbs(Expr e)
-    {
-      ExprSet artif;
-      expr::filter (e, bind::IsConst(), std::inserter (artif, artif.begin ()));
-      for (auto & a : artif)
-      {
-        if (lexical_cast<string>(a).substr(0, 5) == "__e__") return true;
-      }
-      return false;
     }
 
     void addCandidate(int invNum, Expr cnd)
@@ -158,24 +141,28 @@ namespace ufo
       {
         if (hr.srcRelation == hr.dstRelation || hr.isQuery) continue;
 
+        SamplFactory* sf1;
+        SamplFactory* sf2;
+
         // adding lemmas to the body. GF: not sure if it helps
         Expr constraint = hr.body;
-        SamplFactory& sf2 = sfs[getVarIndex(hr.dstRelation, decls)].back();
-        Expr lm2 = sf2.getAllLemmas();
+        sf2 = &sfs[getVarIndex(hr.dstRelation, decls)].back();
+        Expr lm2 = sf2->getAllLemmas();
         for (auto & v : invarVars[getVarIndex(hr.dstRelation, decls)])
           lm2 = replaceAll(lm2, v.second, hr.dstVars[v.first]);
         constraint = mk<AND>(constraint, lm2);
 
         if (!hr.isFact)
         {
-          SamplFactory& sf1 = sfs[getVarIndex(hr.srcRelation, decls)].back();
-          constraint = mk<AND>(constraint, sf1.getAllLemmas());
+          sf1 = &sfs[getVarIndex(hr.srcRelation, decls)].back();
+          constraint = mk<AND>(constraint, sf1->getAllLemmas());
         }
 
         // forward:
         if (hr.srcRelation == rel && find(checked.begin(), checked.end(), hr.dstRelation) == checked.end())
         {
           Expr replCand = cand;
+          for (int i = 0; i < 3; i++) for (auto & v : sf1->lf.nonlinVars) replCand = replaceAll(replCand, v.second, v.first);
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.srcVars[v.first]);
           res = res && getCandForAdjacentRel (replCand, constraint, hr.dstVars, hr.dstRelation, seed);
         }
@@ -184,6 +171,7 @@ namespace ufo
         if (hr.dstRelation == rel && find(checked.begin(), checked.end(), hr.srcRelation) == checked.end() && !hr.isFact)
         {
           Expr replCand = cand;
+          for (int i = 0; i < 3; i++) for (auto & v : sf2->lf.nonlinVars) replCand = replaceAll(replCand, v.second, v.first);
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.dstVars[v.first]);
           res = res && getCandForAdjacentRel (replCand, constraint, hr.srcVars, hr.srcRelation, seed);
         }

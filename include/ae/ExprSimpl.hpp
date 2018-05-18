@@ -89,6 +89,17 @@ namespace ufo
     }
   }
 
+  inline static void getMultOps (Expr a, ExprVector &ops)
+  {
+    if (isOpX<MULT>(a)){
+      for (unsigned i = 0; i < a->arity(); i++){
+        getMultOps(a->arg(i), ops);
+      }
+    } else {
+      ops.push_back(a);
+    }
+  }
+
   /**
    * Represent Expr as multiplication
    */
@@ -1114,44 +1125,59 @@ namespace ufo
   struct FindNonlinAndRewrite
   {
     ExprVector& vars;
-    ExprVector& vars2;
     ExprMap& extraVars;
     
-    FindNonlinAndRewrite (ExprVector& _vars, ExprVector& _vars2, ExprMap& _extraVars) :
-      vars(_vars), vars2(_vars2), extraVars(_extraVars) {};
+    FindNonlinAndRewrite (ExprVector& _vars, ExprMap& _extraVars) :
+      vars(_vars), extraVars(_extraVars) {};
     
     Expr operator() (Expr t)
     {
       if (isOpX<MULT>(t))
       {
-        ExprVector varsForMult;
-        Expr multedConsts;
-        for (unsigned j = 0; j < t->arity(); j++)
+        // using the communativity of multiplication
+        ExprVector ops;
+        getMultOps(t, ops);
+
+        ExprVector nonlinPart;
+        int linPart = 1;
+        for (auto & a : ops)
         {
-          Expr q = t->arg(j);
-          if (bind::isIntConst(q))
+          ExprVector av;
+          filter (a, bind::IsConst (), inserter(av, av.begin()));
+          if (av.size() == 0)
           {
-            int ind = getVarIndex(q, vars);
-            if (ind == -1) return t;
-            varsForMult.push_back(vars2[ind]);
+            linPart = linPart * lexical_cast<int>(a);
+            continue;
           }
-          else
+          for (auto & b : av)
           {
-            // GF: to ensure that it is indeed const
-            multedConsts = (multedConsts == NULL) ? q : mk<MULT>(multedConsts, q);
+            if (find(vars.begin(), vars.end(), b) == vars.end())
+            {
+              bool found = false;
+              for (auto & c : extraVars) if (c.second == b) { found = true; break; }
+              if (! found)
+              {
+                outs () << "WARNING. Wrong symbol at " << *t << ".\n";
+                return mk<TRUE>(t->getFactory());
+              }
+            }
           }
+          nonlinPart.push_back(a);
         }
-        if (varsForMult.size() > 1)
+
+        if (linPart == 0) return mkTerm (mpz_class (0), t->getFactory());
+        if (nonlinPart.size() <= 1) return t;
+
+        Expr multedVars = mkmult(nonlinPart, t->getFactory());
+        if (extraVars[multedVars] == NULL)
         {
-          Expr multedVars = mknary<MULT>(varsForMult);
-          if (extraVars[multedVars] == NULL)
-          {
-            Expr new_name = mkTerm<string> ("__e__" + to_string(extraVars.size()), t->getFactory());
-            Expr var = bind::intConst(new_name);
-            extraVars[multedVars] = var;
-          }
-          return (multedConsts == NULL) ? extraVars[multedVars] : mk<MULT>(multedConsts, extraVars[multedVars]);
+          Expr new_name = mkTerm<string> ("__e__" + to_string(extraVars.size()), t->getFactory());
+          Expr var = bind::intConst(new_name);
+          extraVars[multedVars] = var;
         }
+
+        if (linPart == 1) return extraVars[multedVars];
+        else return mk<MULT>( mkTerm (mpz_class (linPart), t->getFactory()), extraVars[multedVars]);
       }
       else if (isOpX<MOD>(t) || isOpX<IDIV>(t) || isOpX<DIV>(t))
       {
@@ -1159,8 +1185,11 @@ namespace ufo
         int indr = getVarIndex(t->right(), vars);
 
         Expr key = t;
-        if (indl >= 0) key = replaceAll(key, t->left(), vars2[indl]);
-        if (indr >= 0) key = replaceAll(key, t->right(), vars2[indr]);
+        if (indl >= 0) key = replaceAll(key, t->left(), vars[indl]);
+        if (indr >= 0) key = replaceAll(key, t->right(), vars[indr]);
+
+        if (isOpX<MPZ>(t->left()) && lexical_cast<int>(t->left()) == 0)
+          return mkTerm (mpz_class (0), t->getFactory());
 
         if (extraVars[key] == NULL)
         {
@@ -1174,9 +1203,9 @@ namespace ufo
     }
   };
 
-  inline static Expr findNonlinAndRewrite (Expr exp, ExprVector& vars, ExprVector& vars2, ExprMap& extraVars)
+  inline static Expr findNonlinAndRewrite (Expr exp, ExprVector& vars, ExprMap& extraVars)
   {
-    RW<FindNonlinAndRewrite> mu(new FindNonlinAndRewrite(vars, vars2, extraVars));
+    RW<FindNonlinAndRewrite> mu(new FindNonlinAndRewrite(vars, extraVars));
     return dagVisit (mu, exp);
   }
 
@@ -1649,7 +1678,50 @@ namespace ufo
     }
   };
 
-  inline static Expr rewriteNegAnd (Expr exp)
+  inline static Expr simpleQE(Expr exp, ExprSet& quantified)
+  {
+    // rewrite just equalities
+    ExprSet cnjs;
+    ExprSet newCnjs;
+    ExprMap eqs;
+    getConj(exp, cnjs);
+    for (auto & a : cnjs)
+    {
+      bool eq = false;
+      if (isOpX<EQ>(a))
+      {
+        for (auto & b : quantified)
+        {
+          if (a->left() == b)
+          {
+            eq = true;
+            eqs[b] = a->right();
+            break;
+          }
+          else if (a->right() == b)
+          {
+            eq = true;
+            eqs[b] = a->left();
+            break;
+          }
+        }
+      }
+      if (!eq) newCnjs.insert(a);
+    }
+
+    Expr qed = conjoin(newCnjs, exp->getFactory());
+    for (auto & a : eqs) qed = replaceAll(qed, a.first, a.second);
+
+    // check if there are some not eliminated vars
+    ExprVector av;
+    filter (qed, bind::IsConst (), inserter(av, av.begin()));
+    if (emptyIntersect(av, quantified)) return qed;
+
+    // otherwise result is incomplete
+    return mk<TRUE>(exp->getFactory());
+  }
+  
+  inline static Expr rewriteNegAnd(Expr exp)
   {
     RW<NegAndRewriter> a(new NegAndRewriter());
     return dagVisit (a, exp);
