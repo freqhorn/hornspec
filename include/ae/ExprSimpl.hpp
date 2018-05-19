@@ -1320,7 +1320,8 @@ namespace ufo
   {
     ExprSet disjs;
     getDisj(exp, disjs);
-    if (disjs.size() == 1) return exp;
+    if (disjs.size() == 1)
+      return disjoin(disjs, exp->getFactory());
     
     vector<ExprSet> dconjs;
     for (auto &a : disjs)
