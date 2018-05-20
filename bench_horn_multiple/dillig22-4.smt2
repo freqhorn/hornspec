@@ -7,14 +7,15 @@
 (declare-var k0 Int)
 (declare-var k1 Int)
 (declare-var t0 Int)
+(declare-var t1 Int)
 
 (declare-rel fail ())
 
-(rule (=> (and (= x1 0) (= y1 0) (= k1 0)) (inv1 x1 y1 k1 t0)))
+(rule (=> (and (= x1 0) (= y1 0) (= k1 0) (= t0 0)) (inv1 x1 y1 k1 t0)))
 
-(rule (=> (inv1 x1 y1 k1 t0) (inv1 x1 y1 k1 t0)))
+(rule (=> (and (inv1 x1 y1 k1 t0) (= t1 (+ t0 14))) (inv1 x1 y1 k1 t1)))
 
-(rule (=> (inv1 x1 y1 k1 t0) (inv x1 y1 k1 t0)))	
+(rule (=> (and (inv1 x1 y1 k1 t0) (= t1 (+ t0 2))) (inv x1 y1 k1 t1)))
 
 (rule (=> 
     (and 

@@ -5,21 +5,22 @@
 (declare-var y Int)
 (declare-var y1 Int)
 (declare-var len Int)
+(declare-var len1 Int)
 
 (declare-rel fail ())
 
 (rule (=> (and (= x 0) (= y 0) (>= len 0)) (inv1 x y len)))
 
-(rule (=> (inv1 x y len) (inv1 x y len)))
+(rule (=> (and (inv1 x y len) (= len1 (+ len 1))) (inv1 x y len1)))
 
-(rule (=> (inv1 x y len) (inv x y len)))
+(rule (=> (and (inv1 x y len) (= len1 (+ len 80))) (inv x y len1)))
 
 (rule (=> 
     (and 
-	(inv x y len)
+        (inv x y len)
         (< x len)
-	(= x1 (+ x 1))
-	(= y1 (+ y 2))
+        (= x1 (+ x 1))
+        (= y1 (+ y 2))
     )
     (inv x1 y1 len)
   )

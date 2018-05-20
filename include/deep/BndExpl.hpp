@@ -79,7 +79,12 @@ namespace ufo
     Expr toExpr(vector<int>& trace)
     {
       ExprVector ssa;
+      getSSA(trace, ssa);
+      return conjoin(ssa, m_efac);
+    }
 
+    void getSSA(vector<int>& trace, ExprVector& ssa)
+    {
       ExprVector bindVars2;
       bindVars.clear();
       ExprVector bindVars1 = ruleManager.chcs[trace[0]].srcVars;
@@ -131,8 +136,6 @@ namespace ufo
         bindVars.push_back(bindVars2);
         bindVars1 = bindVars2;
       }
-
-      return conjoin(ssa, m_efac);
     }
 
     bool exploreTraces(int cur_bnd, int bnd, bool print = false)
@@ -283,59 +286,104 @@ namespace ufo
       map<int, Expr> indexToInv;
       int chcIndex = 0;
 
-      for (auto & r : ruleManager.chcs) {
-	if (r.isInductive) {
-	  for (int i = 0; i < k; i++) {
-	    traces.push_back(chcIndex);
-	    indexToInv[traces.size()-1] = r.srcRelation;
-	  }
-	  chcIndex++;
-	} else if (r.isQuery) {
-	  chcIndex++;
-	  continue;
-	} else {
-	  //fact or non-inductive clauses
-	  traces.push_back(chcIndex++);
-	}
-      }
+      for (auto & a : ruleManager.decls)
+      {
+        vector<int> trace;
 
-      Expr unrolledTr = toExpr(traces);
+        ExprSet lastModel;
+        for (int i = 0; i < ruleManager.chcs.size(); i++)
+        {
+          auto & r = ruleManager.chcs[i];
+          if (!r.isInductive && r.dstRelation == (a->first()))
+          {
+            if (models[r.srcRelation].size() > 0)
+            {
+              for (int j = 0; j < models[r.srcRelation].back().size(); j ++)
+              {
+                Expr val = mk<EQ>(r.srcVars[j], mkTerm (mpz_class (models[r.srcRelation].back()[j]), m_efac));
+                lastModel.insert(val);
+              }
+            }
+            trace.push_back(i);
+            break;
+          }
+        }
 
-      m_smt_solver.reset();
-      m_smt_solver.assertExpr(unrolledTr);
+        for (int i = 0; i < ruleManager.chcs.size(); i++)
+        {
+          auto & r = ruleManager.chcs[i];
+          if (r.isInductive && r.srcRelation == (a->first()))
+          {
+            for (int j = 0; j < k; j++) trace.push_back(i);
+          }
+        }
 
-      if (!m_smt_solver.solve()) {
-	cout << unrolledTr << " found to be unsat with k = " << k << endl;
-	return false;
-      }
+        for (int i = 0; i < ruleManager.chcs.size(); i++)
+        {
+          auto & r = ruleManager.chcs[i];
+          if (!r.isInductive && !r.isQuery && r.srcRelation == (a->first()))
+          {
+            trace.push_back(i);
+            break;
+          }
+        }
 
-      ZSolver<EZ3>::Model m = m_smt_solver.getModel();
+        ExprVector ssa;
+        getSSA(trace, ssa);
+        bindVars.pop_back();
 
-      for (int bvIndex = 0; bvIndex < bindVars.size(); bvIndex++) {
-	auto invItr = indexToInv.find(bvIndex);
-	if (invItr == indexToInv.end()) {
-	  continue;
-	}
-	
-	auto vars = bindVars[bvIndex];
-	vector<int> model;
-	for (auto var : vars) {
-	  int value;
-	  if (var != m.eval(var)) {
-	    stringstream tmpstream;
-	    tmpstream << m.eval(var);
-	    tmpstream >> value;
-	  } else {
-	    value = guessUniformly(1000)-500;
-	  }
-	  model.push_back(value);
-	}
-	models[invItr->second].push_back(model);
+        bool toContinue = false;
+        while (true)
+        {
+          if (ssa.size() < 2)
+          {
+            outs () << "Unable to find a suitable unrolling for " << *(a->first()) << "\n";
+            toContinue = true;
+            break;
+          }
+
+          m_smt_solver.reset();
+          m_smt_solver.assertExpr(conjoin(lastModel, m_efac));
+          m_smt_solver.assertExpr(conjoin(ssa, m_efac));
+
+          if (m_smt_solver.solve())
+          {
+            break;
+          }
+          else
+          {
+            ssa.pop_back();
+            bindVars.pop_back();
+          }
+        }
+
+        if (toContinue) continue;
+
+        ZSolver<EZ3>::Model m = m_smt_solver.getModel();
+
+        for (auto vars : bindVars) {
+          vector<int> model;
+          for (auto var : vars) {
+            int value;
+            if (var != m.eval(var)) {
+              stringstream tmpstream;
+              tmpstream << m.eval(var);
+              tmpstream >> value;
+            } else {
+              value = guessUniformly(1000)-500;
+              cout << "random guess for: " << var << endl; //DEBUG
+            }
+//            cout << value << "\t";//DEBUG
+            model.push_back(value);
+          }
+//          cout << endl;//DEBUG
+          models[(a->first())].push_back(model);
+        }
       }
 
       return true;
     }
-    
+
     bool unrollAndExecute(const Expr & invRel, ufo::ZSolver<ufo::EZ3> & m_smt_solver, vector<vector<int> > & models, int k = 10, Expr initCondn = nullptr)
     {
 
@@ -346,17 +394,17 @@ namespace ufo
       for (int i = 0; i < ruleManager.chcs.size(); i++) {
         auto & r = ruleManager.chcs[i];
         if (r.isFact) {
-	  initIndex = i;
-	  initFound = true;
-	}
-	if (r.isInductive && r.srcRelation == invRel && r.dstRelation == invRel) {
-	  trIndex = i;
-	}
+          initIndex = i;
+          initFound = true;
+        }
+        if (r.isInductive && r.srcRelation == invRel && r.dstRelation == invRel) {
+          trIndex = i;
+        }
       }
 
       if (!initFound && initCondn == nullptr) {
-	cout << "ERR: init not found for given transition (index: " << trIndex << ")" << endl;
-	return false;
+        cout << "ERR: init not found for given transition (index: " << trIndex << ")" << endl;
+        return false;
       }
       
       Expr init = initCondn == nullptr ? ruleManager.chcs[initIndex].body : initCondn;
@@ -364,13 +412,13 @@ namespace ufo
       HornRuleExt& tr = ruleManager.chcs[trIndex];
 
       for (int i = 0; i < tr.srcVars.size(); i++) {
-	init = replaceAll(init, tr.dstVars[i], tr.srcVars[i]);
+        init = replaceAll(init, tr.dstVars[i], tr.srcVars[i]);
       }
 
 	
       vector<int> trace;
       for (int i = 0; i < k; i++) {
-	trace.push_back(trIndex);
+        trace.push_back(trIndex);
       }
 
       Expr unrolledTr = toExpr(trace);
@@ -382,29 +430,29 @@ namespace ufo
       m_smt_solver.assertExpr(unrolledTr);
 
       if (!m_smt_solver.solve()) {
-	cout << init << " && " << unrolledTr << "\nfound to be unsat\n";
-	return false;
+        cout << init << " && " << unrolledTr << "\nfound to be unsat\n";
+        return false;
       }
 
       ZSolver<EZ3>::Model m = m_smt_solver.getModel();
       
       for (auto vars : bindVars) {
-	vector<int> model;
-	for (auto var : vars) {
-	  int value;
-	  if (var != m.eval(var)) {
-	    stringstream tmpstream;
-	    tmpstream << m.eval(var);
-	    tmpstream >> value;
-	  } else {
-	    value = guessUniformly(1000)-500;
-	    cout << "random guess for: " << var << endl; //DEBUG
-	  }
-	  cout << value << "\t";//DEBUG
-	  model.push_back(value);
-	}
-	cout << endl;//DEBUG
-	models.push_back(model);
+        vector<int> model;
+        for (auto var : vars) {
+          int value;
+          if (var != m.eval(var)) {
+            stringstream tmpstream;
+            tmpstream << m.eval(var);
+            tmpstream >> value;
+          } else {
+            value = guessUniformly(1000)-500;
+            cout << "random guess for: " << var << endl; //DEBUG
+          }
+          cout << value << "\t";//DEBUG
+          model.push_back(value);
+        }
+        cout << endl;//DEBUG
+        models.push_back(model);
       }
 
       return true;
