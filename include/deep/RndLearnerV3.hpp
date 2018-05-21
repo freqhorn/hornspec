@@ -366,20 +366,32 @@ namespace ufo
       int ind = getVarIndex(invRel, decls);
       SamplFactory& sf = sfs[ind].back();
       ExprSet candsFromCode;
+      bool analyzedExtras = false;
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
         SeedMiner sm (hr, invRel, invarVars[ind], sf.lf.nonlinVars);
         sm.analyzeCode();
+        if (!analyzedExtras && hr.srcRelation == invRel)
+        {
+          sm.analyzeExtras (cands[invRel]);
+          analyzedExtras = true;
+        }
+
         for (auto &cand : sm.candidates) candsFromCode.insert(cand);
       }
 
       for (auto & cand : candsFromCode)
       {
         checked.clear();
-        propagate (getVarIndex(invRel, decls), cand, true);
+        Expr replCand = cand;
+        for (int i = 0; i < 3; i++)
+          for (auto & v : sf.lf.nonlinVars) replCand = replaceAll(replCand, v.second, v.first);
+        addCandidate(getVarIndex(invRel, decls), replCand);
+        propagate (getVarIndex(invRel, decls), replCand, true);
       }
 
+      cands[invRel].clear();
       for (auto & a : candidates)
       {
         cands[decls[a.first]].insert(a.second.begin(), a.second.end());
@@ -420,13 +432,8 @@ namespace ufo
     }
 #endif
 
-    bool bootstrap(map<Expr, ExprSet>& cands, bool enableDataLearning, const vector<string> & behaviorfiles){
-
-      for (int i = 0; i < invNumber; i++)
-      {
-        for (auto & cnd : cands[decls[i]]) addCandidate(i, cnd);
-      }
-
+    bool bootstrap(map<Expr, ExprSet>& cands)
+    {
       filterUnsat();
 
       if (multiHoudini(ruleManager.wtoCHCs))
@@ -527,7 +534,7 @@ namespace ufo
     for (auto& dcl: ruleManager.decls) ds.getSeeds(dcl->arg(0), cands);
     for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)]);
     ds.calculateStatistics();
-    if (ds.bootstrap(cands, enableDataLearning, behaviorfiles)) return;
+    if (ds.bootstrap(cands)) return;
     std::srand(std::time(0));
     ds.synthesize(maxAttempts, outfile);
   }
