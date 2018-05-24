@@ -67,7 +67,12 @@ namespace ufo
         if (find(varsRenameFrom.begin(), varsRenameFrom.end(), v) == varsRenameFrom.end())
           quantified.insert(v);
 
-      if (findNonlin(formula)) return simpleQE(formula, quantified);
+      if (findNonlin(formula) || containsOp<IDIV>(formula) || containsOp<MOD>(formula))
+      {
+        Expr newCand = simpleQE(formula, quantified);
+        for (auto & v : invarVars[invNum]) newCand = replaceAll(newCand, varsRenameFrom[v.first], v.second);
+        return newCand;
+      }
 
       AeValSolver ae(mk<TRUE>(m_efac), formula, quantified);
       if (ae.solve())
@@ -112,14 +117,10 @@ namespace ufo
       }
       else
       {
-        if (!isOpX<TRUE>(newCand))
-        {
-          ExprSet cnjs;
-          getConj(newCand, cnjs);
-          for (auto & a : cnjs) addCandidate(invNum, a);
-          return checkCand(invNum);
-        }
-        else return true;
+        ExprSet cnjs;
+        getConj(newCand, cnjs);
+        for (auto & a : cnjs) addCandidate(invNum, a);
+        return checkCand(invNum);
       }
     }
 
