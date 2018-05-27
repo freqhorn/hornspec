@@ -124,13 +124,16 @@ namespace ufo
       }
     }
 
-    void addCandidate(int invNum, Expr cnd)
+    bool addCandidate(int invNum, Expr cnd)
     {
       for (auto & a : candidates[invNum])
       {
-        if (u.isEquiv(a, cnd)) return;
+        if (u.isEquiv(a, cnd)) return false;
+        SamplFactory& sf = sfs[invNum].back();
+        if (!isOpX<TRUE>(sf.getAllLemmas()) && u.implies(sf.getAllLemmas(), cnd)) return false;
       }
       candidates[invNum].push_back(cnd);
+      return true;
     }
 
     bool propagate(int invNum, Expr cand, bool seed)
@@ -233,7 +236,7 @@ namespace ufo
         Expr cand = sf.getFreshCandidate();
         if (cand == NULL) continue;
 
-        addCandidate(invNum, cand);
+        if (!addCandidate(invNum, cand)) continue;
         if (checkCand(invNum))
         {
           assignPrioritiesForLearned();
@@ -317,8 +320,8 @@ namespace ufo
         if (!checkCHC(hr, candidatesTmp))
         {
           bool res2 = true;
-          Expr model = getModel(hr.dstVars);
           int ind = getVarIndex(hr.dstRelation, decls);
+          Expr model = getModel(hr.dstVars);
           ExprVector& ev = candidatesTmp[ind];
 
           ExprVector invVars;
@@ -387,12 +390,16 @@ namespace ufo
         checked.clear();
         Expr replCand = cand;
         for (int i = 0; i < 3; i++)
-          for (auto & v : sf.lf.nonlinVars) replCand = replaceAll(replCand, v.second, v.first);
-        addCandidate(getVarIndex(invRel, decls), replCand);
-        propagate (getVarIndex(invRel, decls), replCand, true);
+          for (auto & v : sf.lf.nonlinVars)
+            replCand = replaceAll(replCand, v.second, v.first);
+        if (addCandidate(ind, replCand))
+          propagate (ind, replCand, true);
       }
+    }
 
-      cands[invRel].clear();
+    void refreshCands(map<Expr, ExprSet>& cands)
+    {
+      cands.clear();
       for (auto & a : candidates)
       {
         cands[decls[a.first]].insert(a.second.begin(), a.second.end());
@@ -433,7 +440,7 @@ namespace ufo
     }
 #endif
 
-    bool bootstrap(map<Expr, ExprSet>& cands)
+    bool bootstrap()
     {
       filterUnsat();
 
@@ -519,7 +526,7 @@ namespace ufo
     {
       outs() << "WARNING.\n" <<
                 "This is an experimental thing for multiple invariants.\n" <<
-                "For a single invariant synthsis, we suggest to use the --v2 option.\n";
+                "For a single invariant synthesis, we suggest to use the --v2 option.\n";
     }
 
     map<Expr, ExprSet> cands;
@@ -529,13 +536,15 @@ namespace ufo
 #ifdef HAVE_ARMADILLO
       ds.getDataCandidates(cands, behaviorfiles);
 #else
-      outs() << "Skipping learning from data as required library(armadillo) not found\n";
+      outs() << "Skipping learning from data as required library (armadillo) not found\n";
 #endif
     }
+
     for (auto& dcl: ruleManager.decls) ds.getSeeds(dcl->arg(0), cands);
-    for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)]);
+    ds.refreshCands(cands);
+    for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)], false);
     ds.calculateStatistics();
-    if (ds.bootstrap(cands)) return;
+    if (ds.bootstrap()) return;
     std::srand(std::time(0));
     ds.synthesize(maxAttempts, outfile);
   }

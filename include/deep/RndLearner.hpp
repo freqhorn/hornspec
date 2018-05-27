@@ -461,7 +461,7 @@ namespace ufo
       invNumber++;
     }
 
-    void doSeedMining(Expr invRel, ExprSet& cands)
+    void doSeedMining(Expr invRel, ExprSet& cands, bool analyzecode = true)
     {
       vector<SeedMiner> css;
       set<int> progConstsTmp;
@@ -474,15 +474,20 @@ namespace ufo
       // init boolean combinations quickly
       sf.bf.initialize();
 
+      bool analyzedExtras = false;
       // analize each rule separately:
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
 
         css.push_back(SeedMiner(hr, invRel, invarVars[ind], sf.lf.nonlinVars));
-        css.back().analyzeCode();
+        if (analyzecode) css.back().analyzeCode();
 
-        if (hr.isInductive) css.back().analyzeExtras(cands);
+        if (!analyzedExtras && hr.srcRelation == invRel)
+        {
+          css.back().analyzeExtras (cands);
+          analyzedExtras = true;
+        }
 
         // convert intConsts to progConsts and add additive inverses (if applicable):
         for (auto &a : css.back().intConsts)
