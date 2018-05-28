@@ -1,4 +1,5 @@
-(declare-rel itp1 (Int Int Int))
+(declare-rel itp1 (Int))
+(declare-rel itp2 (Int Int))
 (declare-rel itp (Int Int Int))
 (declare-var x0 Int)
 (declare-var x1 Int)
@@ -11,11 +12,15 @@
 
 (declare-rel fail ())
 
-(rule (=> (and (= x1 0) (= x3 0) (= x5 (* 10 x9)) (> x9 0) (< x9 10)) (itp1 x1 x3 x5)))
+(rule (=> (> x1 0) (itp1 x1)))
 
-(rule (=> (itp1 x1 x3 x5) (itp1 x1 x3 x5)))
+(rule (=> (and (itp1 x1) (not (= x1 0)) (= x2 (- x1 1))) (itp1 x2)))
 
-(rule (=> (itp1 x1 x3 x5) (itp x1 x3 x5)))
+(rule (=> (and (itp1 x1) (= x1 0) (> x3 0)) (itp2 x1 x3)))
+
+(rule (=> (and (itp2 x1 x3) (not (= x3 0)) (= x4 (- x3 1))) (itp2 x1 x4)))
+
+(rule (=> (and (itp2 x1 x3) (= x3 0) (= x5 (* 10 x9)) (> x9 0) (< x9 10)) (itp x1 x3 x5)))
 
 (rule (=> 
     (and 
@@ -31,4 +36,4 @@
 
 (rule (=> (and (itp x1 x3 x5) (= x5 78)) fail))
 
-(query fail :print-certificate true)
+(query fail)

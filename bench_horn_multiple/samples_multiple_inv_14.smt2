@@ -19,7 +19,7 @@
 
 (rule (=> (>= n 0) (PRE n n 0 0 0)))
 
-(rule (=> (and (PRE n m i j k) (> n 0)
+(rule (=> (and (PRE n m i j k) (not (= n 0))
     (= n1 (- n 1))
     (or
         (and (= i1 (+ i 1)) (= j1 j) (= k1 k))
@@ -29,15 +29,15 @@
 
 (rule (=> (and (PRE n m i j k) (= n 0)) (POST1 m i j k)))
 
-(rule (=> (and (POST1 m i j k) (> i 0) (= i1 (- i 1)) (= m1 (- m 1)) ) (POST1 m1 i1 j k)))
+(rule (=> (and (POST1 m i j k) (not (= i 0)) (= i1 (- i 1)) (= m1 (- m 1)) ) (POST1 m1 i1 j k)))
 
 (rule (=> (and (POST1 m i j k) (= i 0)) (POST2 m i j k)))
 
-(rule (=> (and (POST2 m i j k) (> j 0) (= j1 (- j 1)) (= m1 (- m 1)) ) (POST2 m1 i j1 k)))
+(rule (=> (and (POST2 m i j k) (not (= j 0)) (= j1 (- j 1)) (= m1 (- m 1)) ) (POST2 m1 i j1 k)))
 
 (rule (=> (and (POST2 m i j k) (= j 0)) (POST3 m i j k)))
 
-(rule (=> (and (POST3 m i j k) (> k 0) (= k1 (- j 1)) (= m1 (- m 1)) ) (POST3 m1 i j k1)))
+(rule (=> (and (POST3 m i j k) (not (= k 0)) (= k1 (- j 1)) (= m1 (- m 1)) ) (POST3 m1 i j k1)))
 
 (rule (=> (and (POST3 m i j k) (= k 0) (not (= m 0))) fail))
 

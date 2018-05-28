@@ -14,7 +14,7 @@
 
 (rule (=> (>= n 0) (PRE n n 0 0)))
 
-(rule (=> (and (PRE n m i j) (> n 0)
+(rule (=> (and (PRE n m i j) (not (= n 0))
     (= n1 (- n 1))
     (or
         (and (= i1 (+ i 1)) (= j1 j))
@@ -23,14 +23,11 @@
 
 (rule (=> (and (PRE n m i j) (= n 0)) (POST1 m i j)))
 
-;interestingly, with this precondition the task becomes almost trivial
-;(rule (=> (= m (+ i j)) (POST1 m i j)))
-
-(rule (=> (and (POST1 m i j ) (> i 0) (= i1 (- i 1)) (= m1 (- m 1)) ) (POST1 m1 i1 j )))
+(rule (=> (and (POST1 m i j ) (not (= i 0)) (= i1 (- i 1)) (= m1 (- m 1)) ) (POST1 m1 i1 j )))
 
 (rule (=> (and (POST1 m i j ) (= i 0)) (POST2 m i j )))
 
-(rule (=> (and (POST2 m i j ) (> j 0) (= j1 (- j 1)) (= m1 (- m 1)) ) (POST2 m1 i j1 )))
+(rule (=> (and (POST2 m i j ) (not (= j 0)) (= j1 (- j 1)) (= m1 (- m 1)) ) (POST2 m1 i j1 )))
 
 (rule (=> (and (POST2 m i j ) (= j 0) (not (= m 0))) fail))
 
