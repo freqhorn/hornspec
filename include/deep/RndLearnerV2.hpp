@@ -30,13 +30,21 @@ namespace ufo
     {
       ExprVector eqs;
       ZSolver<EZ3>::Model m = m_smt_solver.getModel();
-      for (auto & v : vars) if (v != m.eval(v))
+      for (auto & v : vars)
       {
-        eqs.push_back(mk<EQ>(v, m.eval(v)));
-      }
-      else
-      {
-        eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (guessUniformly (1000)-500), m_efac)));
+        Expr e = m.eval(v);
+        if (e == NULL)
+        {
+          return NULL;
+        }
+        else if (e != v)
+        {
+          eqs.push_back(mk<EQ>(v, e));
+        }
+        else
+        {
+          eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (guessUniformly (1000)-500), m_efac)));
+        }
       }
       return conjoin (eqs, m_efac);
     }

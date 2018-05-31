@@ -322,32 +322,41 @@ namespace ufo
           bool res2 = true;
           int ind = getVarIndex(hr.dstRelation, decls);
           Expr model = getModel(hr.dstVars);
-          ExprVector& ev = candidatesTmp[ind];
-
-          ExprVector invVars;
-          for (auto & a : invarVars[ind]) invVars.push_back(a.second);
-          SamplFactory& sf = sfs[ind].back();
-
-          for (auto it = ev.begin(); it != ev.end(); )
+          if (model == NULL)
           {
-            Expr repl = *it;
-            for (auto & v : invarVars[ind]) repl = replaceAll(repl, v.second, hr.dstVars[v.first]);
+            // something went wrong with z3. do aggressive weakening (TODO: try bruteforce):
+            candidatesTmp[ind].clear();
+            res2 = false;
+          }
+          else
+          {
+            ExprVector& ev = candidatesTmp[ind];
 
-            if (!u.isSat(model, repl))
+            ExprVector invVars;
+            for (auto & a : invarVars[ind]) invVars.push_back(a.second);
+            SamplFactory& sf = sfs[ind].back();
+
+            for (auto it = ev.begin(); it != ev.end(); )
             {
-              if (hr.isFact)
+              Expr repl = *it;
+              for (auto & v : invarVars[ind]) repl = replaceAll(repl, v.second, hr.dstVars[v.first]);
+
+              if (!u.isSat(model, repl))
               {
-                Expr failedCand = normalizeDisj(*it, invVars);
+                if (hr.isFact)
+                {
+                  Expr failedCand = normalizeDisj(*it, invVars);
 //                outs () << "failed cand for " << *hr.dstRelation << ": " << *failedCand << "\n";
-                Sampl& s = sf.exprToSampl(failedCand);
-                sf.assignPrioritiesForFailed();
+                  Sampl& s = sf.exprToSampl(failedCand);
+                  sf.assignPrioritiesForFailed();
+                }
+                it = ev.erase(it);
+                res2 = false;
               }
-              it = ev.erase(it);
-              res2 = false;
-            }
-            else
-            {
-              ++it;
+              else
+              {
+                ++it;
+              }
             }
           }
 
@@ -531,7 +540,7 @@ namespace ufo
 
     map<Expr, ExprSet> cands;
     for (auto& dcl: ruleManager.decls) ds.initializeDecl(dcl);
-    
+
     if (enableDataLearning) {
 #ifdef HAVE_ARMADILLO
       ds.getDataCandidates(cands, behaviorfiles);

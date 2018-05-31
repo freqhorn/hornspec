@@ -462,7 +462,8 @@ namespace ufo
     
     Expr eval (Expr e, bool completion = false)
     {
-      assert (model);
+      if (!model) return NULL;
+
       z3::ast ast (z3.toAst (e));
 
       Z3_ast raw_val = NULL;
