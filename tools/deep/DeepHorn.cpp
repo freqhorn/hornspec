@@ -75,26 +75,25 @@ int main (int argc, char ** argv)
         " freqhorn [options] <file.smt2>  discover invariants for a system of constrained Horn clauses\n" <<
         "                                 (`file.smt2` in a datalog format extending SMT-LIB2)\n" <<
         "Options:\n" <<
-        " " << OPT_V1 << "                            original version (just one-by-one sampling)\n"
-        " " << OPT_V2 << " (default)                  revised version (all-at once bootstrapping and sampling)\n\n"
-        " " << OPT_V3 << "                            Multi-loop version (in progress)\n\n"
-        " " << OPT_MAX_ATTEMPTS << " <N>                  maximal number of candidates to sample and check\n" <<
-        " " << OPT_OUT_FILE << " <file.smt2>               serialize invariants to `file.smt2`\n" <<
-        " " << OPT_GET_FREQS << "                         calculate frequency distributions and sample from them\n\n" <<
-        "V1 options only:\n" <<
-        " " << OPT_ADD_EPSILON << "                           add small probabilities to features that never happen in the code\n" <<
+        " " << OPT_V1 << "                            original version (one-by-one sampling)\n"
+        " " << OPT_V2 << "                            optimized version for transition systems (+ bootstrapping)\n"
+        " " << OPT_V3 << " (default)                  optimized version (+ bootstrapping, propagation, and data candidates)\n\n"
+        " " << OPT_GET_FREQS << "                         calculate frequency distributions and sample from them\n" <<
         " " << OPT_AGG_PRUNING << "                          prioritize and prune the search space aggressively\n" <<
         "                                 (if not specified, sample from uniform distributions)\n" <<
+        " " << OPT_MAX_ATTEMPTS << " <N>                  maximal number of candidates to sample and check\n" <<
+        " " << OPT_OUT_FILE << " <file.smt2>               serialize invariants to `file.smt2`\n\n" <<
+        "V1 options only:\n" <<
+        " " << OPT_ADD_EPSILON << "                           add small probabilities to features that never happen in the code\n" <<
         " " << OPT_K_IND << "                          run k-induction after each learned lemma\n\n" <<
         "V2 options only:\n" <<
-        " " << OPT_AGG_PRUNING << "                          prioritize and prune the search space aggressively\n" <<
         " " << OPT_ITP << "                           bound for itp-based proofs\n" <<
         " " << OPT_BATCH << "                         threshold for how many candidates to check at once\n" <<
-      " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n" <<
-      " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
-      " " << OPT_DATA_INPUT << "                    name of the file which contains behaviors; can be specified multiple times for each invariant \n"; 
-    
-    
+        " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n\n" <<
+        "V3 options only:\n" <<
+        " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
+        " " << OPT_DATA_INPUT << "                    name of the file which contains behaviors; can be specified multiple times for each invariant \n";
+
     return 0;
   }
 
@@ -107,7 +106,7 @@ int main (int argc, char ** argv)
     return 0;
   }
 
-  if (!vers1 && !vers2 && !vers3) vers2 = true; // default
+  if (!vers1 && !vers2 && !vers3) vers3 = true; // default
 
   int maxAttempts = getIntValue(OPT_MAX_ATTEMPTS, 2000000, argc, argv);
   bool kinduction = getBoolValue(OPT_K_IND, false, argc, argv);
