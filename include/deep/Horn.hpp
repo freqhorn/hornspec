@@ -93,6 +93,9 @@ namespace ufo
 
   class CHCs
   {
+    private:
+    set<int> indeces;
+
     public:
 
     ExprFactory &m_efac;
@@ -105,6 +108,7 @@ namespace ufo
     ExprSet decls;
     map<Expr, ExprVector> invVars;
     map<Expr, vector<int>> outgs;
+    bool noInductiveRules = false;
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
 
@@ -247,8 +251,6 @@ namespace ufo
         simplBoolReplCnj(allOrigSymbs, lin);
         hr.body = conjoin(lin, m_efac);
 
-        outgs[hr.srcRelation].push_back(chcs.size()-1);
-
         hr.assignVarsAndRewrite (origSrcSymbs, invVars[hr.srcRelation],
                                  origDstSymbs, invVars[hr.dstRelation]);
 
@@ -273,7 +275,51 @@ namespace ufo
         }
       }
 
+      // remove useless rules
+      chcSlice(failDecl);
+      vector<HornRuleExt> tmpChcs;
+      for (auto i : indeces) tmpChcs.push_back(chcs[i]);
+      chcs = tmpChcs;
+      for (int i = 0; i < chcs.size(); i++)
+        outgs[chcs[i].srcRelation].push_back(i);
+
+      // sort rules
       wtoSort();
+    }
+
+    void chcSlice (Expr dstRel)
+    {
+      for (int i = 0; i < chcs.size(); i++)
+      {
+        if (chcs[i].dstRelation == dstRel)
+        {
+          bool alreadyIn = find(indeces.begin(), indeces.end(), i) != indeces.end();
+          indeces.insert(i);
+          if (!chcs[i].isInductive && !alreadyIn)
+            chcSlice(chcs[i].srcRelation);
+        }
+      }
+    }
+
+    bool hasCycles()
+    {
+      if (!noInductiveRules) return true;
+      return hasCycles(mk<TRUE>(m_efac), ExprVector());
+    }
+
+    bool hasCycles(Expr srcRel, ExprVector ev)
+    {
+      for (auto & chc : ev)
+        if (chc == srcRel)
+          return true;
+
+      ev.push_back(srcRel);
+      bool res = false;
+      for (auto & i : outgs[srcRel])
+      {
+        res = res || hasCycles(chcs[i].dstRelation, ev);
+      }
+      return res;
     }
 
     void addRule (HornRuleExt* r)
@@ -335,12 +381,20 @@ namespace ufo
 
       int r1 = 0;
       for (auto & hr : chcs)
+      {
         if (hr.isInductive)
         {
           wtoDecls.push_back(hr.srcRelation);
           wtoCHCs.push_back(&hr);
         }
+      }
+
       int r2 = wtoDecls.size();
+      if (r2 == 0)
+      {
+        noInductiveRules = true;
+        return;
+      }
 
       while (r1 != r2)
       {
@@ -366,6 +420,7 @@ namespace ufo
         r1 = r2;
         r2 = wtoDecls.size();
       }
+
       assert(wtoCHCs.size() == chcs.size());
 
       // filter wtoDecls

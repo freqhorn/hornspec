@@ -529,6 +529,18 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
+    if (!ruleManager.hasCycles())
+    {
+      BndExpl bnd(ruleManager);
+      bnd.exploreTraces(1, ruleManager.chcs.size(), true);
+      return;
+    }
+    else if (ruleManager.noInductiveRules)
+    {
+      outs () << "Mutual recursion unsupported\n";
+      return;
+    }
+
     RndLearnerV3 ds(m_efac, z3, ruleManager, freqs, aggp);
 
     if (ruleManager.decls.size() == 1)
