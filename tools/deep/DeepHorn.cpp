@@ -72,8 +72,7 @@ int main (int argc, char ** argv)
         "                                           Grigory Fedyukovich et al                                      \n\n" <<
         "Usage:                          Purpose:\n" <<
         " freqhorn [--help]               show help\n" <<
-        " freqhorn [options] <file.smt2>  discover invariants for a system of constrained Horn clauses\n" <<
-        "                                 (`file.smt2` in a datalog format extending SMT-LIB2)\n" <<
+        " freqhorn [options] <file.smt2>  discover invariants for a system of constrained Horn clauses\n\n" <<
         "Options:\n" <<
         " " << OPT_V1 << "                            original version (one-by-one sampling)\n"
         " " << OPT_V2 << "                            optimized version for transition systems (+ bootstrapping)\n"

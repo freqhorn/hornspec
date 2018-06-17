@@ -1016,24 +1016,34 @@ namespace ufo
         ctx.check_error ();
         
         z3::ast_vector rules (ctx, Z3_fixedpoint_get_rules(ctx, fp));
+        if (rules.empty()) rules = z3::ast_vector(ctx, Z3_fixedpoint_get_assertions(ctx, fp));
 
         ExprSet relations;
         for (unsigned i = 0; i < rules.size (); ++i){
-            Expr rule = z3.toExpr (rules [i]);
-            m_rules.push_back(rule);
+          Expr rule = z3.toExpr (rules [i]);
+          m_rules.push_back(rule);
 
-            if (!isOpX<FORALL>(rule)) continue;
-
-            Expr head = rule->arg(rule->arity() - 1)->arg(1);
+          if (isOpX<FORALL>(rule)) {
+            Expr head = rule->last()->arg(1);
             if (isOpX<FAPP>(head)){
-                if (head->arity () > 0){
-                    if (isOpX<FDECL>(head->arg(0))){
-                        relations.insert(head->arg(0));
-                    }
+              if (head->arity () > 0){
+                if (isOpX<FDECL>(head->arg(0))){
+                  relations.insert(head->arg(0));
                 }
+              }
             }
+          } else {
+            Expr head = rule->last();
+            if (isOpX<FAPP>(head)){
+              if (head->arity () > 0){
+                if (isOpX<FDECL>(head->arg(0))){
+                  relations.insert(head->arg(0));
+                }
+              }
+            }
+          }
         }
-        
+
         for (unsigned i = 0; i < queries.size (); ++i){
             m_queries.push_back(z3.toExpr (queries [i]));
         }

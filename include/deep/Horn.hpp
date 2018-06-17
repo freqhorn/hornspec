@@ -225,8 +225,24 @@ namespace ufo
         Expr body = rule->arg(0);
         Expr head = rule->arg(1);
 
-        hr.head = head->arg(0);
-        hr.dstRelation = head->arg(0)->arg(0);
+        if (isOpX<FALSE>(head))
+        {
+          hr.head = head;
+          hr.dstRelation = head;
+          failDecl = head;
+        }
+        else if (isOpX<FAPP>(head))
+        {
+          hr.head = head->arg(0);
+          hr.dstRelation = head->arg(0)->arg(0);
+        }
+        else
+        {
+          body = mk<AND>(body, mk<NEG>(head));
+          hr.head = mk<FALSE>(m_efac);
+          hr.dstRelation = mk<FALSE>(m_efac);
+          failDecl = mk<FALSE>(m_efac);
+        }
 
         ExprVector origSrcSymbs;
         ExprSet lin;
