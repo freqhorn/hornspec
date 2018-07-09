@@ -69,7 +69,7 @@ namespace ufo
 
       if (findNonlin(formula) || containsOp<IDIV>(formula) || containsOp<MOD>(formula))
       {
-        Expr newCand = simpleQE(formula, quantified);
+        Expr newCand = simpleQE(formula, quantified, true);
         for (auto & v : invarVars[invNum]) newCand = replaceAll(newCand, varsRenameFrom[v.first], v.second);
         return newCand;
       }
@@ -93,10 +93,11 @@ namespace ufo
       getDisj(candToProp, dsjs);
       ExprSet newSeedDsjs;
       int invNum = getVarIndex(rel, decls);
-
       for (auto & d : dsjs)
-        newSeedDsjs.insert(eliminateQuantifiers(mk<AND>(d, constraint), varsRenameFrom, invNum));
-
+      {
+        Expr r = eliminateQuantifiers(mk<AND>(d, constraint), varsRenameFrom, invNum);
+        newSeedDsjs.insert(r);
+      }
       Expr newCand = disjoin(newSeedDsjs, m_efac);
 
       if (seed)
@@ -111,7 +112,6 @@ namespace ufo
         }
 
         newCand = conjoin(newCnjs, m_efac);
-        checked.insert(rel);
         if (isOpX<TRUE>(newCand)) return true;
         else return propagate(invNum, newCand, true);
       }
@@ -126,11 +126,12 @@ namespace ufo
 
     bool addCandidate(int invNum, Expr cnd)
     {
+      SamplFactory& sf = sfs[invNum].back();
+      if (!isOpX<TRUE>(sf.getAllLemmas()) && u.implies(sf.getAllLemmas(), cnd)) return false;
+
       for (auto & a : candidates[invNum])
       {
         if (u.isEquiv(a, cnd)) return false;
-        SamplFactory& sf = sfs[invNum].back();
-        if (!isOpX<TRUE>(sf.getAllLemmas()) && u.implies(sf.getAllLemmas(), cnd)) return false;
       }
       candidates[invNum].push_back(cnd);
       return true;
@@ -140,11 +141,10 @@ namespace ufo
     {
       bool res = true;
       Expr rel = decls[invNum];
-
+      checked.insert(rel);
       for (auto & hr : ruleManager.chcs)
       {
         if (hr.srcRelation == hr.dstRelation || hr.isQuery) continue;
-
         SamplFactory* sf1;
         SamplFactory* sf2;
 
@@ -186,11 +186,9 @@ namespace ufo
     bool checkCand(int invNum)
     {
       Expr rel = decls[invNum];
-//            outs () << "  -- checkCand for " << *rel << ": " << *conjoin(candidates[invNum], m_efac) << "\n";
       if (!checkInit(invNum, rel)) return false;
       if (!checkInductiveness(rel)) return false;
 
-      checked.insert(rel);
       return propagate(invNum, conjoin(candidates[invNum], m_efac), false);
     }
 
@@ -222,14 +220,15 @@ namespace ufo
       //      if (progress) updateGrammars(); // GF: doesn't work great :(
     }
 
-    void synthesize(int maxAttempts, char * outfile)
+    bool synthesize(int maxAttempts, char * outfile)
     {
       ExprSet cands;
       for (int i = 0; i < maxAttempts; i++)
       {
         // next cand (to be sampled)
         // TODO: find a smarter way to calculate; make parametrizable
-        int invNum = getVarIndex(ruleManager.wtoDecls[i % ruleManager.wtoDecls.size()], decls);
+        int tmp = ruleManager.cycles[i % ruleManager.cycles.size()][0];
+        int invNum = getVarIndex(ruleManager.chcs[tmp].srcRelation, decls);
         checked.clear();
         candidates.clear();
         SamplFactory& sf = sfs[invNum].back();
@@ -243,10 +242,11 @@ namespace ufo
           if (checkAllLemmas())
           {
             outs () << "Success after " << (i+1) << " iterations\n";
-            return;
+            return true;
           }
         }
       }
+      return false;
     }
 
     bool splitUnsatSets(ExprVector & src, ExprVector & dst1, ExprVector & dst2)
@@ -374,17 +374,19 @@ namespace ufo
     }
 
     // adapted from doSeedMining
-    void getSeeds(Expr invRel, map<Expr, ExprSet>& cands)
+    void getSeeds(Expr invRel, map<Expr, ExprSet>& cands, bool analizeCode = true)
     {
       int ind = getVarIndex(invRel, decls);
       SamplFactory& sf = sfs[ind].back();
       ExprSet candsFromCode;
       bool analyzedExtras = false;
+      bool isFalse = false;
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
         SeedMiner sm (hr, invRel, invarVars[ind], sf.lf.nonlinVars);
-        sm.analyzeCode();
+        if (analizeCode) sm.analyzeCode();
+        else sm.candidates.clear();
         if (!analyzedExtras && hr.srcRelation == invRel)
         {
           sm.analyzeExtras (cands[invRel]);
@@ -529,27 +531,15 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
+    BndExpl bnd(ruleManager);
+
     if (!ruleManager.hasCycles())
     {
-      BndExpl bnd(ruleManager);
       bnd.exploreTraces(1, ruleManager.chcs.size(), true);
-      return;
-    }
-    else if (ruleManager.noInductiveRules)
-    {
-      outs () << "Mutual recursion unsupported\n";
       return;
     }
 
     RndLearnerV3 ds(m_efac, z3, ruleManager, freqs, aggp);
-
-    if (ruleManager.decls.size() == 1)
-    {
-      outs() << "WARNING.\n" <<
-                "This is an experimental thing for multiple invariants.\n" <<
-                "For a single invariant synthesis, we suggest to use the --v2 option.\n";
-    }
-
     map<Expr, ExprSet> cands;
     for (auto& dcl: ruleManager.decls) ds.initializeDecl(dcl);
 
@@ -561,7 +551,13 @@ namespace ufo
 #endif
     }
 
-    for (auto& dcl: ruleManager.decls) ds.getSeeds(dcl->arg(0), cands);
+    for (int i = 0; i < ruleManager.cycles.size(); i++)
+    {
+      Expr pref = bnd.compactPrefix(i);
+      cands[ruleManager.chcs[ruleManager.cycles[i][0]].srcRelation].insert(pref);
+    }
+
+    for (auto& dcl: ruleManager.wtoDecls) ds.getSeeds(dcl, cands);
     ds.refreshCands(cands);
     for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)], false);
     ds.calculateStatistics();

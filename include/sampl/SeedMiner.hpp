@@ -172,7 +172,8 @@ namespace ufo
 
     void analyzeExtras(ExprSet& extra)
     {
-      for (auto &cnj : extra) coreProcess(cnj);
+      for (auto &cnj : extra)
+        coreProcess(propagateEqualities(cnj));
     }
 
     void analyzeCode()

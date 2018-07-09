@@ -578,8 +578,11 @@ namespace ufo
     }
     return exp;
   }
-  
-  
+
+  template<typename T> static void unique_push_back(T e, vector<T>& v) {
+    if (find(v.begin(), v.end(), e) == v.end()) v.push_back(e);
+  }
+
   template<typename T>
   struct RW
   {
@@ -1248,39 +1251,6 @@ namespace ufo
     return fn.found;
   }
   
-  inline Expr convertToGEandGT(Expr term)
-  {   
-    if (isOpX<LT>(term)) return mk<GT>(term->right(), term->left());
-    
-    if (isOpX<LEQ>(term)) return mk<GEQ>(term->right(), term->left());
-    
-    if (isOpX<EQ>(term)) return mk<AND>(
-                  mk<GEQ>(term->left(), term->right()),
-                  mk<GEQ>(term->right(), term->left()));
-    
-    if (isOpX<NEQ>(term)) return mk<OR>(
-                  mk<GT>(term->left(), term->right()),
-                  mk<GT>(term->right(), term->left()));
-    
-    if (isOpX<NEG>(term))
-    {
-      return mk<NEG>(convertToGEandGT(term->last()));
-    }
-    
-    if (isOpX<AND>(term) || isOpX<OR>(term))
-    {
-      ExprSet args;
-      for (int i = 0; i < term->arity(); i++){
-        args.insert(convertToGEandGT(term->arg(i)));
-      }
-      
-      return isOpX<AND>(term) ? conjoin (args, term->getFactory()) :
-                  disjoin (args, term->getFactory());
-      
-    }
-    return term;
-  }
-  
   inline static Expr simplifiedAnd (Expr a, Expr b){
     ExprSet conjs;
     getConj(a, conjs);
@@ -1456,6 +1426,57 @@ namespace ufo
       return reBuildNegCmp(term, term->arg(0), term->arg(1));
     }
     return mk<NEG>(term);
+  }
+
+  bool hasBoolSort(Expr e)
+  {
+    if (bind::isBoolConst(e) || isOp<BoolOp>(e)) return true;
+    return false;
+  }
+
+  inline Expr convertToGEandGT(Expr term)
+  {
+    if (isOpX<LT>(term)) return mk<GT>(term->right(), term->left());
+
+    if (isOpX<LEQ>(term)) return mk<GEQ>(term->right(), term->left());
+
+    if (isOpX<EQ>(term))
+    {
+      if (hasBoolSort(term->left()))
+        mk<OR>(mk<AND>(term->left(), term->right()),
+               mk<AND>(mkNeg(term->left()), mkNeg(term->right())));
+      else return mk<AND>(
+                       mk<GEQ>(term->left(), term->right()),
+                       mk<GEQ>(term->right(), term->left()));
+    }
+
+    if (isOpX<NEQ>(term))
+    {
+      if (hasBoolSort(term->left()))
+        return mk<OR>(mk<AND>(term->left(), mkNeg(term->right())),
+                      mk<AND>(mkNeg(term->left()), term->right()));
+      else return mk<OR>(
+                         mk<GT>(term->left(), term->right()),
+                         mk<GT>(term->right(), term->left()));
+    }
+
+    if (isOpX<NEG>(term))
+    {
+      return mk<NEG>(convertToGEandGT(term->last()));
+    }
+
+    if (isOpX<AND>(term) || isOpX<OR>(term))
+    {
+      ExprSet args;
+      for (int i = 0; i < term->arity(); i++){
+        args.insert(convertToGEandGT(term->arg(i)));
+      }
+
+      return isOpX<AND>(term) ? conjoin (args, term->getFactory()) :
+      disjoin (args, term->getFactory());
+
+    }
+    return term;
   }
 
   inline static Expr unfoldITE(Expr term)
@@ -1679,7 +1700,7 @@ namespace ufo
     }
   };
 
-  inline static Expr simpleQE(Expr exp, ExprSet& quantified)
+  template<typename Range> static Expr simpleQE(Expr exp, Range& quantified, bool strict = false)
   {
     // rewrite just equalities
     ExprSet cnjs;
@@ -1693,13 +1714,15 @@ namespace ufo
       {
         for (auto & b : quantified)
         {
-          if (a->left() == b)
+          if (eqs[b] != NULL) continue;
+
+          if (a->left() == b && emptyIntersect(a->right(), quantified))
           {
             eq = true;
             eqs[b] = a->right();
             break;
           }
-          else if (a->right() == b)
+          else if (a->right() == b && emptyIntersect(a->left(), quantified))
           {
             eq = true;
             eqs[b] = a->left();
@@ -1712,6 +1735,7 @@ namespace ufo
 
     Expr qed = conjoin(newCnjs, exp->getFactory());
     for (auto & a : eqs) qed = replaceAll(qed, a.first, a.second);
+    if (!strict) return qed;
 
     // check if there are some not eliminated vars
     ExprVector av;

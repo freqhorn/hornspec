@@ -43,7 +43,10 @@ namespace ufo
         }
         else
         {
-          eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (guessUniformly (1000)-500), m_efac)));
+          if (bind::isBoolConst(v))
+            eqs.push_back(mk<EQ>(v, mk<TRUE>(m_efac)));
+          else
+            eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (guessUniformly (1000)-500), m_efac)));
         }
       }
       return conjoin (eqs, m_efac);

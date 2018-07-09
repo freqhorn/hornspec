@@ -2864,6 +2864,31 @@ namespace expr
       }
     };
 
+    struct HasUninterp : public std::unary_function<Expr,VisitAction>
+    {
+      bool found;
+
+      HasUninterp () : found(false) {}
+
+      VisitAction operator() (Expr exp)
+      {
+        if (found || isOpX<FAPP>(exp))
+        {
+          if (exp->arity() > 0)
+          {
+            if (isOpX<FDECL>(exp->arg(0)) &&
+                "BOOL" == boost::lexical_cast<std::string> (exp->arg(0)->last()) &&
+                exp->arg(0)->arity() > 2)
+            {
+              found = true;
+              return VisitAction::skipKids ();
+            }
+          }
+        }
+        return VisitAction::doKids ();
+      }
+    };
+
     struct SIZE : public std::unary_function<Expr,VisitAction>
     {
       size_t count;
@@ -2934,6 +2959,7 @@ namespace expr
   // pairwise replacing
   inline Expr replaceAll (Expr exp, ExprVector& s, ExprVector& t)
   {
+    if (isOpX<TRUE>(exp) || isOpX<FALSE>(exp)) return exp;
     assert(s.size() == t.size());
     RAVALL rav(&s, &t);
     return dagVisit (rav, exp);
@@ -3032,6 +3058,13 @@ namespace expr
   template <typename M> inline bool containsOp (Expr e1)
   {
     ContainsOp<M> co;
+    dagVisit (co, e1);
+    return co.found;
+  }
+
+  inline bool hasUninterp (Expr e1)
+  {
+    HasUninterp co;
     dagVisit (co, e1);
     return co.found;
   }

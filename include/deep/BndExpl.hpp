@@ -3,7 +3,7 @@
 
 #include "Horn.hpp"
 #include "Distribution.hpp"
-#include "ae/SMTUtils.hpp"
+#include "ae/AeValSolver.hpp"
 
 using namespace std;
 using namespace boost;
@@ -72,6 +72,27 @@ namespace ufo
           getAllTraces(ruleManager.chcs[a].dstRelation, dst, len-1, newtrace, traces);
         }
       }
+    }
+
+    Expr compactPrefix (int num)
+    {
+      vector<int>& pr = ruleManager.prefixes[num];
+      if (pr.size() == 0) return mk<TRUE>(m_efac);
+
+      Expr pref = toExpr(pr);
+
+      ExprSet quantified;
+      filter (pref, bind::IsConst(), inserter (quantified, quantified.begin ()));
+      for (auto & a : bindVars.back()) quantified.erase(a);
+
+      if (quantified.size() > 0)
+      {
+        AeValSolver ae(mk<TRUE>(m_efac), pref, quantified);
+        ae.solve();
+        pref = ae.getValidSubset();
+      }
+
+      return replaceAll(pref, bindVars.back(), ruleManager.chcs[ruleManager.cycles[num][0]].srcVars);
     }
 
     vector<ExprVector> bindVars;
@@ -282,46 +303,52 @@ namespace ufo
     bool unrollAndExecuteMultiple(ufo::ZSolver<ufo::EZ3> & m_smt_solver,
 				  map<Expr, vector<vector<int> > > & models, int k = 10)
     {
-      vector<int> traces;
-      map<int, Expr> indexToInv;
-      int chcIndex = 0;
-
-      for (auto & a : ruleManager.decls)
+      for (int i = 0; i < ruleManager.cycles.size(); i++)
       {
-        vector<int> trace;
-
-        ExprSet lastModel;
-        for (int i = 0; i < ruleManager.chcs.size(); i++)
+        auto & loop = ruleManager.cycles[i];
+        Expr srcRel = ruleManager.chcs[loop[0]].srcRelation;
+        if (models[srcRel].size() > 0) continue;
+        bool toContinue = false;
+        for (auto & v : ruleManager.chcs[loop[0]].srcVars)
         {
-          auto & r = ruleManager.chcs[i];
-          if (!r.isInductive && r.dstRelation == (a->first()))
+          if (!bind::isIntConst(v))
           {
-            if (models[r.srcRelation].size() > 0)
-            {
-              for (int j = 0; j < models[r.srcRelation].back().size(); j ++)
-              {
-                Expr val = mk<EQ>(r.srcVars[j], mkTerm (mpz_class (models[r.srcRelation].back()[j]), m_efac));
-                lastModel.insert(val);
-              }
-            }
-            trace.push_back(i);
+            toContinue = true;
             break;
           }
         }
+        if (toContinue) continue;
 
-        for (int i = 0; i < ruleManager.chcs.size(); i++)
+        auto & prefix = ruleManager.prefixes[i];
+        vector<int> trace;
+        ExprSet lastModel;
+        int p = prefix.size();
+
+        while (p > 0)
         {
-          auto & r = ruleManager.chcs[i];
-          if (r.isInductive && r.srcRelation == (a->first()))
+          auto & r = ruleManager.chcs[prefix[--p]];
+          if (models[r.srcRelation].size() > 0)
           {
-            for (int j = 0; j < k; j++) trace.push_back(i);
+            assert(models[r.srcRelation].back().size() == r.srcVars.size());
+            for (int j = 0; j < r.srcVars.size(); j ++)
+            {
+              Expr val = mk<EQ>(r.srcVars[j], mkTerm (mpz_class (models[r.srcRelation].back()[j]), m_efac));
+              lastModel.insert(val);
+            }
+            break;
           }
         }
+        while (p < prefix.size()) trace.push_back(prefix[p++]);
+        int l = trace.size() - 1;
+
+        for (int j = 0; j < k; j++)
+          for (int m = 0; m < loop.size(); m++)
+            trace.push_back(loop[m]);
 
         for (int i = 0; i < ruleManager.chcs.size(); i++)
         {
           auto & r = ruleManager.chcs[i];
-          if (!r.isInductive && !r.isQuery && r.srcRelation == (a->first()))
+          if (i != loop[0] && !r.isQuery && r.srcRelation == srcRel)
           {
             trace.push_back(i);
             break;
@@ -332,12 +359,12 @@ namespace ufo
         getSSA(trace, ssa);
         bindVars.pop_back();
 
-        bool toContinue = false;
+        toContinue = false;
         while (true)
         {
           if (ssa.size() < 2)
           {
-            outs () << "Unable to find a suitable unrolling for " << *(a->first()) << "\n";
+            outs () << "Unable to find a suitable unrolling for " << *srcRel << "\n";
             toContinue = true;
             break;
           }
@@ -361,8 +388,11 @@ namespace ufo
 
         ZSolver<EZ3>::Model m = m_smt_solver.getModel();
 
-        for (auto vars : bindVars) {
+        for (; l < bindVars.size(); l = l + loop.size())
+        {
+          auto & vars = bindVars[l];
           vector<int> model;
+//          outs () << "model for " << l << ": ";
           for (auto var : vars) {
             int value;
             if (var != m.eval(var)) {
@@ -373,11 +403,11 @@ namespace ufo
               value = guessUniformly(1000)-500;
               cout << "random guess for: " << var << endl; //DEBUG
             }
-//            cout << value << "\t";//DEBUG
             model.push_back(value);
+//             outs () << *var << " = " << value << ", ";
           }
-//          cout << endl;//DEBUG
-          models[(a->first())].push_back(model);
+//          outs () << "\b\b]\n";
+          models[srcRel].push_back(model);
         }
       }
 
