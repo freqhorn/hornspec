@@ -1250,7 +1250,35 @@ namespace ufo
     dagVisit (fn, e1);
     return fn.found;
   }
-  
+
+  struct FindArray : public std::unary_function<Expr, VisitAction>
+  {
+    bool found;
+
+    FindArray () : found (false) {}
+
+    VisitAction operator() (Expr exp)
+    {
+      if (found)
+      {
+        return VisitAction::skipKids ();
+      }
+      else if (bind::isConst<ARRAY_TY> (exp))
+      {
+        found = true;
+        return VisitAction::skipKids ();
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
+  inline bool findArray (Expr e1)
+  {
+    FindArray fn;
+    dagVisit (fn, e1);
+    return fn.found;
+  }
+
   inline static Expr simplifiedAnd (Expr a, Expr b){
     ExprSet conjs;
     getConj(a, conjs);
@@ -1322,6 +1350,10 @@ namespace ufo
       return bind::realConst(new_name);
     else if (bind::isBoolConst(var))
       return bind::boolConst(new_name);
+    else if (bind::isConst<ARRAY_TY> (var))
+      return bind::mkConst(new_name, mk<ARRAY_TY> (
+             mk<INT_TY> (new_name->getFactory()),
+             mk<INT_TY> (new_name->getFactory()))); // GF: currently, only Arrays over Ints
 
     else return NULL;
   }
@@ -1680,6 +1712,28 @@ namespace ufo
   {
     RW<MoveInsideITEr> a(new MoveInsideITEr());
     return dagVisit (a, exp);
+  }
+
+  struct RAVSUBEXPR: public std::unary_function<Expr,VisitAction>
+  {
+    Expr s;
+    Expr t;
+    Expr p;
+
+    RAVSUBEXPR (Expr _s, Expr _t, Expr _p) : s(_s), t(_t), p(_p) {}
+    VisitAction operator() (Expr exp) const
+    {
+      return exp == s ?
+        VisitAction::changeTo (replaceAll(exp, t, p)) :
+        VisitAction::doKids ();
+    }
+  };
+
+  // -- replace all occurrences of t by p in a subexpression s  of exp
+  inline Expr replaceInSubexpr (Expr exp, Expr s, Expr t, Expr p)
+  {
+    RAVSUBEXPR rav(s, t, p);
+    return dagVisit (rav, exp);
   }
 
   struct NegAndRewriter
@@ -2068,6 +2122,41 @@ namespace ufo
     else if (isOp<ComparissonOp>(ex)) // assuming the lin.combination is on the left side
     {
       intConsts.insert(lexical_cast<int> (ex->right()));
+    }
+  }
+
+  inline static void normalizeSelects(Expr& body)
+  {
+    ExprVector se;
+    filter (body, bind::IsSelect (), inserter(se, se.begin()));
+    for (auto & s : se)
+    {
+      if (!bind::isIntConst(s->right()))
+      {
+        Expr var_it = bind::intConst(mkTerm<string> ("it_" + lexical_cast<string>(&s), body->getFactory()));
+        body = mk<AND>(replaceInSubexpr(body, s, s->right(), var_it), mk<EQ>(s->right(), var_it));
+      }
+    }
+  }
+
+  inline static void uniqueizeSelects(Expr& body)
+  {
+    ExprVector se;
+    filter (body, bind::IsSelect (), inserter(se, se.begin()));
+    if (se.size() < 2) return;
+
+    ExprSet seenIterators;
+    for (auto & s : se)
+    {
+      if (find(seenIterators.begin(), seenIterators.end(), s->right()) == seenIterators.end())
+      {
+        seenIterators.insert(s->right());
+      }
+      else
+      {
+        Expr var_it = bind::intConst(mkTerm<string> ("it_" + lexical_cast<string>(&s), body->getFactory()));
+        body = mk<AND>(replaceInSubexpr(body, s, s->right(), var_it), mk<EQ>(s->right(), var_it));
+      }
     }
   }
 

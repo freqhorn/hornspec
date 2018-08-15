@@ -68,7 +68,7 @@ namespace ufo
   {
     private:
     set<int> indeces;
-    string varname = " $_";
+    string varname = "_FH_";
 
     public:
 
@@ -84,6 +84,9 @@ namespace ufo
     map<Expr, vector<int>> outgs;
     vector<vector<int>> prefixes;  // for cycles
     vector<vector<int>> cycles;
+    bool hasArrays = false;
+    map<Expr, ExprVector> arrRangeMap; // created only from queries (currently)
+    map<Expr, ExprVector> arrIterMap; // created only from queries (currently)
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
 
@@ -151,7 +154,12 @@ namespace ufo
             var = bind::realConst(new_name);
           else if (isOpX<BOOL_TY> (a->arg(i)))
             var = bind::boolConst(new_name);
-
+          else if (isOpX<ARRAY_TY> (a->arg(i))) // GF: currently support only arrays over Ints
+          {
+            var = bind::mkConst(new_name, mk<ARRAY_TY>
+                  (mk<INT_TY> (m_efac), mk<INT_TY> (m_efac)));
+            hasArrays = true;
+          }
           invVars[a->arg(0)].push_back(var);
         }
       }
@@ -170,7 +178,6 @@ namespace ufo
         chcs.push_back(HornRuleExt());
         HornRuleExt& hr = chcs.back();
         Expr rule = r;
-
         while (isOpX<FORALL>(r))
         {
           toReplace = true;
@@ -279,12 +286,17 @@ namespace ufo
         hr.assignVarsAndRewrite (origSrcSymbs, invVars[hr.srcRelation],
                                  origDstSymbs, invVars[hr.dstRelation]);
         hr.body = simpleQE(hr.body, hr.locVars);
+        if (hasArrays)
+        {
+          normalizeSelects(hr.body);
+//          uniqueizeSelects(hr.body); // maybe will be needed some time later?
+        }
       }
 
       // remove useless rules
-      failShrink(failDecl);
-      for (auto rit = indeces.rbegin(); rit != indeces.rend(); ++rit)
-        chcs.erase(chcs.begin() + *rit);
+      if (failShrink(failDecl))
+        for (auto rit = indeces.rbegin(); rit != indeces.rend(); ++rit)
+          chcs.erase(chcs.begin() + *rit);
 
       indeces.clear();
       chcSliceBwd(failDecl);
@@ -298,8 +310,10 @@ namespace ufo
       wtoSort();
     }
 
-    void failShrink (Expr dstRel)
+    bool failShrink (Expr dstRel)
     {
+      if (hasArrays) return false; // current limitations
+
       for (int i = 0; i < chcs.size(); i++)
       {
         if (chcs[i].dstRelation != dstRel) continue;
@@ -308,6 +322,9 @@ namespace ufo
         quantified.insert(chcs[i].dstVars.begin(), chcs[i].dstVars.end());
         quantified.insert(chcs[i].locVars.begin(), chcs[i].locVars.end());
         Expr tmp = chcs[i].body;
+
+         // current limitations
+        if (findNonlin(tmp) || containsOp<IDIV>(tmp) || containsOp<MOD>(tmp)) return false;
 
         if (quantified.size() > 0)
         {
@@ -320,7 +337,7 @@ namespace ufo
         {
           failShrink(chcs[i].srcRelation);
           indeces.insert(i);
-          return;
+          return true;
         }
       }
       for (int i = 0; i < chcs.size(); i++)
@@ -331,6 +348,7 @@ namespace ufo
           chcs[i].dstRelation = failDecl;
         }
       }
+      return true;
     }
 
     void chcSliceBwd (Expr dstRel)

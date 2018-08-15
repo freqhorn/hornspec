@@ -45,7 +45,7 @@ namespace ufo
         {
           if (bind::isBoolConst(v))
             eqs.push_back(mk<EQ>(v, mk<TRUE>(m_efac)));
-          else
+          else if (bind::isIntConst(v))
             eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (guessUniformly (1000)-500), m_efac)));
         }
       }
@@ -345,6 +345,11 @@ namespace ufo
 
     std::srand(std::time(0));
 
+    if (ruleManager.hasArrays)
+    {
+      outs () << "Arrays are not supported in this mode\n";
+      exit(0);
+    }
     if (ruleManager.decls.size() > 1)
     {
       outs() << "WARNING: learning multiple invariants is currently unsupported in --v2.\n"

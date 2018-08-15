@@ -32,6 +32,11 @@ namespace ufo
 
     vector<map<int, Expr>> invarVars;
 
+    // for arrays
+    vector<ExprSet> arrCands;
+    vector<ExprSet> arrSelects;
+    vector<ExprSet> arrIterRanges;
+
     int invNumber;
     int numOfSMTChecks;
 
@@ -458,35 +463,36 @@ namespace ufo
         if (sf.addVar(var)) invarVars[invNumber][i] = var;
       }
 
+      arrCands.push_back(ExprSet());
+      arrSelects.push_back(ExprSet());
+      arrIterRanges.push_back(ExprSet());
+
       invNumber++;
     }
 
-    void doSeedMining(Expr invRel, ExprSet& cands, bool analyzecode = true)
+    void doSeedMining(Expr invRel, ExprSet& cands, bool analizeCode = true)
     {
       vector<SeedMiner> css;
       set<int> progConstsTmp;
       set<int> progConsts;
       set<int> intCoefs;
-      
+
       int ind = getVarIndex(invRel, decls);
       SamplFactory& sf = sfs[ind].back();
 
-      // init boolean combinations quickly
-      sf.bf.initialize();
-
-      bool analyzedExtras = false;
+      bool analizedExtras = false;
       // analize each rule separately:
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
 
         css.push_back(SeedMiner(hr, invRel, invarVars[ind], sf.lf.nonlinVars));
-        if (analyzecode) css.back().analyzeCode();
+        if (analizeCode) css.back().analizeCode();
 
-        if (!analyzedExtras && hr.srcRelation == invRel)
+        if (!analizedExtras && hr.srcRelation == invRel)
         {
-          css.back().analyzeExtras (cands);
-          analyzedExtras = true;
+          css.back().analizeExtras (cands);
+          analizedExtras = true;
         }
 
         // convert intConsts to progConsts and add additive inverses (if applicable):
@@ -540,7 +546,7 @@ namespace ufo
         sf.lf.addConst(min);
       }
 
-      sf.lf.initialize();
+      sf.initialize(arrCands[ind], arrSelects[ind], arrIterRanges[ind]);
 
       ExprSet allCands;
       for (auto &cs : css)
@@ -700,6 +706,11 @@ namespace ufo
     std::srand(std::time(0));
     ExprSet itpCands;
 
+    if (ruleManager.hasArrays)
+    {
+      outs () << "Arrays are not supported in this mode\n";
+      exit(0);
+    }
     if (ruleManager.decls.size() > 1)
     {
       outs () << "WARNING: learning multiple invariants is currently unstable\n"

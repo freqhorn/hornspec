@@ -81,15 +81,19 @@ namespace ufo
 
       Expr pref = toExpr(pr);
 
-      ExprSet quantified;
-      filter (pref, bind::IsConst(), inserter (quantified, quantified.begin ()));
-      for (auto & a : bindVars.back()) quantified.erase(a);
-
-      if (quantified.size() > 0)
+      if (!ruleManager.hasArrays && !findNonlin(pref) &&
+          !containsOp<IDIV>(pref) && !containsOp<MOD>(pref)) // current limitations
       {
-        AeValSolver ae(mk<TRUE>(m_efac), pref, quantified);
-        ae.solve();
-        pref = ae.getValidSubset();
+        ExprSet quantified;
+        filter (pref, bind::IsConst(), inserter (quantified, quantified.begin ()));
+        for (auto & a : bindVars.back()) quantified.erase(a);
+
+        if (quantified.size() > 0)
+        {
+          AeValSolver ae(mk<TRUE>(m_efac), pref, quantified);
+          ae.solve();
+          pref = ae.getValidSubset();
+        }
       }
 
       return replaceAll(pref, bindVars.back(), ruleManager.chcs[ruleManager.cycles[num][0]].srcVars);
@@ -175,7 +179,6 @@ namespace ufo
 
         for (auto &a : traces)
         {
-//        for (auto &b : a) outs() << " -> " << * ruleManager.chcs[b].dstRelation; outs() << "\n";
           num_traces++;
           unsat = !u.isSat(toExpr(a));
           if (!unsat) break;

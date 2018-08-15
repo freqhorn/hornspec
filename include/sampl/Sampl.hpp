@@ -5,6 +5,7 @@
 #include "ae/ExprSimpl.hpp"
 #include "LinCom.hpp"
 #include "BoolCom.hpp"
+#include "ArrCom.hpp"
 
 using namespace std;
 using namespace boost;
@@ -39,16 +40,18 @@ namespace ufo
 
     density hasBooleanComb;
     density orAritiesDensity;
+    bool hasArrays = false;
 
     public:
 
     LAfactory lf;
     Bfactory bf;
+    ARRfactory af;
 
     ExprSet learnedExprs;
 
     SamplFactory(ExprFactory &_efac, bool aggp) :
-      m_efac(_efac), lf(_efac, aggp), bf(_efac) {}
+      m_efac(_efac), lf(_efac, aggp), bf(_efac), af(_efac, aggp) {}
 
     Expr getAllLemmas()
     {
@@ -68,7 +71,20 @@ namespace ufo
         lf.addVar(var);
         added = true;
       }
+      else if (bind::isConst<ARRAY_TY> (var))
+      {
+        af.addVar(var);
+        added = true;
+        hasArrays = true;
+      }
       return added;
+    }
+
+    void initialize(ExprSet& arrCands, ExprSet& arrSelects, ExprSet& arrRange)
+    {
+      bf.initialize();
+      lf.initialize();
+      af.initialize(lf.getVars(), arrCands, arrSelects, arrRange);
     }
 
     Sampl& exprToSampl(Expr ex)
@@ -166,6 +182,10 @@ namespace ufo
 
     Expr getFreshCandidate()
     {
+      // for now, if a CHC system has arrays, we try candidates only with array
+      // in the future, we will need arithmetic candidates as well
+      if (hasArrays) return af.guessTerm();
+
       int arity = chooseByWeight(orAritiesDensity);
       int hasBool = chooseByWeight(hasBooleanComb);
       int hasLin = arity - hasBool;

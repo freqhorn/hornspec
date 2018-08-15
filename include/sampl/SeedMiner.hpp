@@ -13,8 +13,12 @@ namespace ufo
   {
     public:
 
-    ExprSet candidates;
+    // for arrays
+    ExprSet arrCands;
+    ExprSet arrSelects;
+    ExprSet arrIterRanges;
 
+    ExprSet candidates;
     set<int> intConsts;
     set<int> intCoefs;
 
@@ -27,6 +31,57 @@ namespace ufo
 
     SeedMiner(HornRuleExt& r, Expr& d, map<int, Expr>& v, ExprMap& e) :
       hr(r), invRel(d), invVars(v), extraVars(e), m_efac(d->getFactory()) {};
+
+    void getSelectTmpl (Expr tmpl)
+    {
+      ExprSet dsjs;
+      ExprSet tmp;
+      getDisj(tmpl, dsjs);
+      ExprVector invAndIterVarsAll;
+      for (auto & a : invVars) invAndIterVarsAll.push_back(a.second);
+
+      for (auto dsj : dsjs)
+      {
+        ExprSet se;
+        filter (dsj, bind::IsSelect (), inserter(se, se.begin()));
+        if (se.size() == 0)
+        {
+          tmp.insert(mkNeg(dsj));
+          continue;
+        }
+
+        ExprVector invAndIterVars;
+        for (auto & a : invVars) invAndIterVars.push_back(a.second);
+
+        for (auto & a : se)
+        {
+          arrSelects.insert(a);
+          invAndIterVars.push_back(a);
+          assert (bind::isIntConst(a->right())); // complex indexes like A[i+1] are supposed to be rewritten in Horn.hpp
+
+          if (find(invAndIterVars.begin(), invAndIterVars.end(),
+                   a->right()) == invAndIterVars.end())
+            invAndIterVars.push_back (a->right());
+
+          if (find(invAndIterVarsAll.begin(), invAndIterVarsAll.end(),
+                   a->right()) == invAndIterVarsAll.end())
+            invAndIterVarsAll.push_back(a->right());
+        }
+
+        ExprSet arrCandsTmp;
+        getConj(convertToGEandGT(dsj), arrCandsTmp);
+        for (auto & a : arrCandsTmp) arrCands.insert(normalizeDisj(a, invAndIterVars));
+      }
+
+      if (arrCands.size() == 0) return;
+
+      for (auto & e : tmp)
+      {
+        ExprSet rangeTmp;
+        getConj(convertToGEandGT(e), rangeTmp);
+        for (auto & a : rangeTmp) arrIterRanges.insert(normalizeDisj(a, invAndIterVarsAll));
+      }
+    }
 
     void addSeedHlp(Expr tmpl, ExprVector& vars, ExprSet& actualVars)
     {
@@ -42,7 +97,7 @@ namespace ufo
         for (auto & a : vrs)
         {
           if (std::find(std::begin(vars), std::end (vars), a)
-              == std::end(vars)) {found = false; break; }
+              == std::end(vars)) { found = false; break; }
         }
         if (found) newDsjs.insert(dsj);
       }
@@ -170,17 +225,17 @@ namespace ufo
       obtainSeeds(e);
     }
 
-    void analyzeExtras(ExprSet& extra)
+    void analizeExtras(ExprSet& extra)
     {
       for (auto &cnj : extra)
         coreProcess(propagateEqualities(cnj));
     }
 
-    void analyzeCode()
+    void analizeCode()
     {
       if (false) // printing only
       {
-        outs() << "\nAnalize CHC:\n";
+        outs() << "Analize CHC: " << *hr.srcRelation << " -> " << *hr.dstRelation << ":\n";
         outs() << "src vars: ";
         for (int i = 0; i < hr.srcVars.size(); i++) outs() << *hr.srcVars[i] << ", ";
         outs() << "\n";
@@ -232,6 +287,7 @@ namespace ufo
       {
         Expr massaged = propagateEqualities(body);
         coreProcess(mkNeg(massaged));
+        getSelectTmpl(mkNeg(hr.body));
       }
       else if (hr.isFact)
       {

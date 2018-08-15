@@ -234,6 +234,7 @@ namespace ufo
         SamplFactory& sf = sfs[invNum].back();
         Expr cand = sf.getFreshCandidate();
         if (cand == NULL) continue;
+//        outs () << " - - - sampled cand: #" << i << ": " << *cand << "\n";
 
         if (!addCandidate(invNum, cand)) continue;
         if (checkCand(invNum))
@@ -305,6 +306,18 @@ namespace ufo
       return true;
     }
 
+    bool hasQuantifiedCands(map<int, ExprVector>& cands)
+    {
+      for (auto & a : cands)
+      {
+        for (auto & b : a.second)
+        {
+          if (isOpX<FORALL>(b)) return true;
+        }
+      }
+      return false;
+    }
+
     bool multiHoudini(vector<HornRuleExt*> worklist, bool recur = true)
     {
       if (!anyProgress(worklist)) return false;
@@ -322,7 +335,7 @@ namespace ufo
           bool res2 = true;
           int ind = getVarIndex(hr.dstRelation, decls);
           Expr model = getModel(hr.dstVars);
-          if (model == NULL)
+          if (model == NULL || hasQuantifiedCands(candidatesTmp))
           {
             // something went wrong with z3. do aggressive weakening (TODO: try bruteforce):
             candidatesTmp[ind].clear();
@@ -331,7 +344,6 @@ namespace ufo
           else
           {
             ExprVector& ev = candidatesTmp[ind];
-
             ExprVector invVars;
             for (auto & a : invarVars[ind]) invVars.push_back(a.second);
             SamplFactory& sf = sfs[ind].back();
@@ -379,21 +391,29 @@ namespace ufo
       int ind = getVarIndex(invRel, decls);
       SamplFactory& sf = sfs[ind].back();
       ExprSet candsFromCode;
-      bool analyzedExtras = false;
+      bool analizedExtras = false;
       bool isFalse = false;
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
         SeedMiner sm (hr, invRel, invarVars[ind], sf.lf.nonlinVars);
-        if (analizeCode) sm.analyzeCode();
+        if (analizeCode) sm.analizeCode();
         else sm.candidates.clear();
-        if (!analyzedExtras && hr.srcRelation == invRel)
+        if (!analizedExtras && hr.srcRelation == invRel)
         {
-          sm.analyzeExtras (cands[invRel]);
-          analyzedExtras = true;
+          sm.analizeExtras (cands[invRel]);
+          analizedExtras = true;
         }
 
         for (auto &cand : sm.candidates) candsFromCode.insert(cand);
+
+        // for arrays (currently, use only query)
+        if (analizeCode && hr.isQuery && !sm.arrIterRanges.empty())
+        {
+          arrCands[ind] = sm.arrCands;
+          arrSelects[ind] = sm.arrSelects;
+          arrIterRanges[ind] = sm.arrIterRanges;
+        }
       }
 
       for (auto & cand : candsFromCode)
@@ -419,7 +439,6 @@ namespace ufo
 
     bool anyProgress(vector<HornRuleExt*> worklist)
     {
-      bool res = false;
       for (int i = 0; i < invNumber; i++)
       {
         // simple check if there is a non-empty candidate
@@ -427,11 +446,14 @@ namespace ufo
         {
           if (hr->srcRelation == decls[i] || hr->dstRelation == decls[i])
           {
-            if (candidates[i].size() > 0) return true;
+            if (candidates[i].size() > 0)
+            {
+              return true;
+            }
           }
         }
       }
-      return res;
+      return false;
     }
 
 #ifdef HAVE_ARMADILLO
@@ -504,23 +526,52 @@ namespace ufo
       {
         int ind = getVarIndex(hr.srcRelation, decls);
         SamplFactory& sf = sfs[ind].back();
-        Expr lmApp = sf.getAllLemmas();
-        if (annotations[ind].size() > 0) lmApp = mk<AND>(lmApp, conjoin(annotations[ind], m_efac));
-        for (auto & v : invarVars[ind]) lmApp = replaceAll(lmApp, v.second, hr.srcVars[v.first]);
-        m_smt_solver.assertExpr(lmApp);
+        ExprSet lms = sf.learnedExprs;
+        for (auto & a : annotations[ind]) lms.insert(a);
+        for (auto a : lms)
+        {
+          for (auto & v : invarVars[ind]) a = replaceAll(a, v.second, hr.srcVars[v.first]);
+          if (isOpX<FORALL>(a))
+          {
+            ExprVector varz;
+            for (int i = 0; i < a->arity() - 1; i++)
+            {
+              varz.push_back(bind::fapp(a->arg(i)));
+            }
+            m_smt_solver.assertForallExpr(varz, a);
+          }
+          else
+          {
+            m_smt_solver.assertExpr(a);
+          }
+        }
       }
 
       if (!hr.isQuery)
       {
         int ind = getVarIndex(hr.dstRelation, decls);
         SamplFactory& sf = sfs[ind].back();
-        Expr lmApp = sf.getAllLemmas();
-        if (annotations[ind].size() > 0) lmApp = mk<AND>(lmApp, conjoin(annotations[ind], m_efac));
-        for (auto & v : invarVars[ind]) lmApp = replaceAll(lmApp, v.second, hr.dstVars[v.first]);
-        m_smt_solver.assertExpr(mk<NEG>(lmApp));
+        ExprSet lms = sf.learnedExprs;
+        ExprSet negged;
+        for (auto & a : annotations[ind]) lms.insert(a);
+        for (auto a : lms)
+        {
+          for (auto & v : invarVars[ind]) a = replaceAll(a, v.second, hr.dstVars[v.first]);
+          if (isOpX<FORALL>(a))
+          {
+            Expr b = a->arg(a->arity() - 1);
+            negged.insert(mk<NEG>(b));
+          }
+          else
+          {
+            negged.insert(mk<NEG>(a));
+          }
+        }
+        m_smt_solver.assertExpr(disjoin(negged, m_efac));
       }
 
-      return !m_smt_solver.solve ();
+      bool res = !m_smt_solver.solve ();
+      return res;
     }
   };
 
@@ -532,6 +583,12 @@ namespace ufo
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     BndExpl bnd(ruleManager);
+
+    if (ruleManager.hasArrays && ruleManager.decls.size() > 1)
+    {
+      outs () << "Systems with arrays and multiple invariants are not supported\n";
+      exit(0);
+    }
 
     if (!ruleManager.hasCycles())
     {
