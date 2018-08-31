@@ -19,6 +19,12 @@ namespace ufo
     map<int, ExprVector> candidates;
     int updCount = 1;
 
+    map<int, Expr> iterators; // per cycle
+    map<int, Expr> preconds;
+    map<int, Expr> ssas;
+    map<int, ExprSet> qvars;
+    map<int, ExprVector> bindvars;
+
     public:
 
     RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, bool freqs, bool aggp) :
@@ -124,10 +130,32 @@ namespace ufo
       }
     }
 
+    void getArrCandIters(int ind, ExprSet& iters)
+    {
+      for (auto & a : arrSelects[ind]) iters.insert(a->right());
+    }
+
     bool addCandidate(int invNum, Expr cnd)
     {
       SamplFactory& sf = sfs[invNum].back();
-      if (!isOpX<TRUE>(sf.getAllLemmas()) && u.implies(sf.getAllLemmas(), cnd)) return false;
+      Expr allLemmas = sf.getAllLemmas();
+      if (containsOp<FORALL>(cnd) || containsOp<FORALL>(allLemmas))
+      {
+        if (containsOp<FORALL>(cnd))
+        {
+          auto hr = ruleManager.getFirstRuleOutside(decls[invNum]);
+          assert(hr != NULL);
+
+          ExprSet cnjs;
+          ExprSet newCnjs;
+          Expr it = iterators[invNum];
+          if (it != NULL)
+            cnd = replaceArrRangeForIndCheck (invNum, cnd, hr->body);
+        }
+        candidates[invNum].push_back(cnd);
+        return true;
+      }
+      if (!isOpX<TRUE>(allLemmas) && u.implies(allLemmas, cnd)) return false;
 
       for (auto & a : candidates[invNum])
       {
@@ -135,6 +163,53 @@ namespace ufo
       }
       candidates[invNum].push_back(cnd);
       return true;
+    }
+
+    // hacky helper (to be revisited in the future)
+    Expr replaceArrRangeForIndCheck(int invNum, Expr cand, Expr body)
+    {
+      ExprSet iterVars;
+      getArrCandIters(invNum, iterVars);
+      Expr precond = preconds[invNum];
+
+      ExprSet cnjs;
+      ExprSet newCnjs;
+      getConj(cand->last()->left(), cnjs);
+
+      // TODO: support the case when precond has two or more conjuncts
+      for (auto & a : iterVars)
+        for (auto & b : cnjs)
+          if (u.isEquiv(replaceAll(b, a, iterators[invNum]), precond))
+            newCnjs.insert(b);
+
+      if (newCnjs.size() != 1) return cand;
+      Expr preCand = *newCnjs.begin();
+
+      cnjs.clear();
+      newCnjs.clear();
+      getConj(body, cnjs);
+
+      for (auto & b : cnjs)
+        if (u.isEquiv(mk<NEG>(precond), b)) newCnjs.insert(b);
+
+      Expr bodyRestr = conjoin(newCnjs, m_efac);
+
+      ExprSet qVars;
+      ExprSet vars1;
+      ExprSet vars2;
+      filter (preCand, bind::IsConst (), inserter(vars1, vars1.begin()));
+      filter (bodyRestr, bind::IsConst (), inserter(vars2, vars2.begin()));
+
+      for (auto & v1 : vars1)
+        if (find(vars2.begin(), vars2.end(), v1) != vars2.end()) qVars.insert(v1);
+
+      if (qVars.empty()) return cand;
+
+      AeValSolver ae(mk<TRUE>(m_efac), mk<AND>(preCand, bodyRestr), qVars);
+      if (ae.solve())
+        return replaceAll(cand, preCand, ae.getValidSubset());
+
+      return cand;
     }
 
     bool propagate(int invNum, Expr cand, bool seed)
@@ -232,7 +307,7 @@ namespace ufo
         checked.clear();
         candidates.clear();
         SamplFactory& sf = sfs[invNum].back();
-        Expr cand = sf.getFreshCandidate();
+        Expr cand = sf.getFreshCandidate(i < 25); // try simple array candidates first
         if (cand == NULL) continue;
 //        outs () << " - - - sampled cand: #" << i << ": " << *cand << "\n";
 
@@ -573,6 +648,29 @@ namespace ufo
       bool res = !m_smt_solver.solve ();
       return res;
     }
+
+    void initArrayStuff(BndExpl& bnd)
+    {
+      for (int invNum = 0; invNum < decls.size(); invNum++)
+      {
+        vector<int> cycle;
+        ruleManager.getCycleForRel(decls[invNum], cycle);
+        if (cycle.size() != 1)
+        {
+          for (int i = 0; i < cycle.size(); i++) outs () << " " << cycle[i] << ",";
+          outs () << "Small-step encoding is not supported currently\n";
+          exit(0);     // TODO: support longer cycles
+        }
+        ExprSet ssa;
+        ssas[invNum] = bnd.toExpr(cycle);
+        bindvars[invNum] = bnd.bindVars.back();
+        getConj(ssas[invNum], ssa);
+
+        filter (ssas[invNum], bind::IsConst (), inserter(qvars[invNum], qvars[invNum].begin()));
+        preconds[invNum] = ruleManager.getPrecondition(&ruleManager.chcs[cycle[0]]);
+        iterators[invNum] = getEvolvingIntVar(preconds[invNum], ssa);
+      }
+    }
   };
 
   inline void learnInvariants3(string smt, char * outfile, int maxAttempts, bool freqs, bool aggp, bool enableDataLearning, const vector<string> & behaviorfiles)
@@ -584,12 +682,6 @@ namespace ufo
     ruleManager.parse(smt);
     BndExpl bnd(ruleManager);
 
-    if (ruleManager.hasArrays && ruleManager.decls.size() > 1)
-    {
-      outs () << "Systems with arrays and multiple invariants are not supported\n";
-      exit(0);
-    }
-
     if (!ruleManager.hasCycles())
     {
       bnd.exploreTraces(1, ruleManager.chcs.size(), true);
@@ -599,6 +691,7 @@ namespace ufo
     RndLearnerV3 ds(m_efac, z3, ruleManager, freqs, aggp);
     map<Expr, ExprSet> cands;
     for (auto& dcl: ruleManager.decls) ds.initializeDecl(dcl);
+    if (ruleManager.hasArrays) ds.initArrayStuff(bnd);
 
     if (enableDataLearning) {
 #ifdef HAVE_ARMADILLO

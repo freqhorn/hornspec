@@ -50,6 +50,8 @@ namespace ufo
 
     ExprSet learnedExprs;
 
+    bool initilized = true;
+
     SamplFactory(ExprFactory &_efac, bool aggp) :
       m_efac(_efac), lf(_efac, aggp), bf(_efac), af(_efac, aggp) {}
 
@@ -84,7 +86,17 @@ namespace ufo
     {
       bf.initialize();
       lf.initialize();
-      af.initialize(lf.getVars(), arrCands, arrSelects, arrRange);
+      if (hasArrays)
+      {
+        if (arrSelects.empty() || arrRange.empty())
+        {
+          initilized = false;
+        }
+        else
+        {
+          af.initialize(lf.getVars(), arrCands, arrSelects, arrRange);
+        }
+      }
     }
 
     Sampl& exprToSampl(Expr ex)
@@ -119,7 +131,7 @@ namespace ufo
       int maxArity = 0;
       set<int> orArities;
 
-      if (samples.size() == 0)
+      if (lf.getVars().size() > 0 && samples.size() == 0)
       {
         // artificially add one default sample in case there is nothing here
         // TODO: find a better solution
@@ -180,11 +192,11 @@ namespace ufo
       }
     }
 
-    Expr getFreshCandidate()
+    Expr getFreshCandidate(bool arrSimpl = true)
     {
       // for now, if a CHC system has arrays, we try candidates only with array
       // in the future, we will need arithmetic candidates as well
-      if (hasArrays) return af.guessTerm();
+      if (hasArrays) return arrSimpl ? af.guessSimplTerm() : af.guessTerm();
 
       int arity = chooseByWeight(orAritiesDensity);
       int hasBool = chooseByWeight(hasBooleanComb);

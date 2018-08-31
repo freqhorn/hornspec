@@ -4,8 +4,6 @@
 (declare-var i1 Int)
 (declare-var N Int)
 
-; problematic query
-
 (declare-rel inv ((Array Int Int) Int Int))
 (declare-rel fail ())
 

@@ -85,8 +85,6 @@ namespace ufo
     vector<vector<int>> prefixes;  // for cycles
     vector<vector<int>> cycles;
     bool hasArrays = false;
-    map<Expr, ExprVector> arrRangeMap; // created only from queries (currently)
-    map<Expr, ExprVector> arrIterMap; // created only from queries (currently)
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
 
@@ -443,6 +441,33 @@ namespace ufo
       }
     }
 
+    void getCycleForRel(Expr rel, vector<int>& cycle)
+    {
+      for (auto & c : cycles)
+      {
+        if (chcs[c[0]].srcRelation == rel)
+        {
+          cycle.insert(std::end(cycle), c.begin(), c.end());
+          return;
+        }
+      }
+    }
+
+    HornRuleExt* getFirstRuleOutside (Expr rel)
+    {
+      for (auto & c : cycles)
+      {
+        if (chcs[c[0]].srcRelation == rel)
+        {
+          for (auto & a : outgs[rel])
+          {
+            if (a != c.back()) return &chcs[a];
+          }
+        }
+      }
+      return NULL;
+    }
+
     void addRule (HornRuleExt* r)
     {
       chcs.push_back(*r);
@@ -486,11 +511,8 @@ namespace ufo
       }
     }
 
-    Expr getPrecondition (Expr decl)
+    Expr getPrecondition (HornRuleExt* hr)
     {
-      HornRuleExt* hr;
-      for (auto &a : chcs) if (a.srcRelation == decl->left() && a.dstRelation == decl->left()) hr = &a;
-
       ExprSet cnjs;
       ExprSet newCnjs;
       getConj(hr->body, cnjs);
@@ -499,6 +521,14 @@ namespace ufo
         if (emptyIntersect(a, hr->dstVars) && emptyIntersect(a, hr->locVars)) newCnjs.insert(a);
       }
       return conjoin(newCnjs, m_efac);
+    }
+
+    Expr getPrecondition (Expr decl)
+    {
+      for (auto &a : chcs)
+        if (a.srcRelation == decl->left() && a.dstRelation == decl->left())
+          return getPrecondition(&a);
+      return mk<TRUE>(m_efac);
     }
 
     void wtoSort()

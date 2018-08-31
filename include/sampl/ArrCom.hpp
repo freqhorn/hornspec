@@ -107,6 +107,22 @@ namespace ufo
         return NULL;
       }
     }
+
+    Expr guessSimplTerm ()
+    {
+      LAdisj expr2;
+      if (postFac.guessTerm(expr2, 1))
+      {
+        ExprVector args = forall_args;
+        args.push_back(mk<IMPL>(pre, postFac.toExpr(expr2)));
+        Expr forallExpr = mknary<FORALL> (args);
+        return forallExpr;
+      }
+      else
+      {
+        return NULL;
+      }
+    }
   };
 }
 

@@ -2160,6 +2160,49 @@ namespace ufo
     }
   }
 
+  Expr getEvolvingIntVar(Expr exp, ExprSet& ssa)
+  {
+    Expr it;
+    ExprSet expVars;
+    ExprSet cands;
+    filter (exp, bind::IsConst (), inserter(expVars, expVars.begin()));
+    for (auto & a : ssa)
+    {
+      if (isOpX<EQ>(a) && !findArray(a))
+      {
+        ExprSet vars;
+        filter (a, bind::IsConst (), inserter(vars, vars.begin()));
+        if (vars.size() > 1)
+        {
+          // heuristic here. need to find a more stable solution
+          if (bind::isIntConst(a->right()) && !bind::isIntConst(a->left()))
+            filter (a->left(), bind::IsConst (), inserter(cands, cands.begin()));
+          else if (bind::isIntConst(a->left()) && !bind::isIntConst(a->right()))
+            filter (a->right(), bind::IsConst (), inserter(cands, cands.begin()));
+        }
+      }
+    }
+    if (isOpX<TRUE>(exp))
+    {
+      if (cands.size() > 1)
+        outs () << "WARNING: iterator choice needs attention!\n";
+      it = *cands.begin();
+    }
+    else
+    {
+      for (auto & e : cands)
+      {
+        if (find (expVars.begin(), expVars.end(), e) != expVars.end())
+        {
+          if (it != NULL)
+            outs () << "WARNING: iterator choice needs attention!\n";
+          it = e;
+        }
+      }
+    }
+    return it;
+  }
+
   inline static bool isSymmetric (Expr exp)
   {
     return isOpX<EQ>(exp);
