@@ -1457,6 +1457,14 @@ namespace ufo
     {
       return reBuildNegCmp(term, term->arg(0), term->arg(1));
     }
+    else if (isOpX<IMPL>(term))
+    {
+      return mk<AND>(term->left(), mkNeg(term->right()));
+    }
+    else if (isOpX<FORALL>(term))
+    {
+      return mkNeg(term->last());
+    }
     return mk<NEG>(term);
   }
 
@@ -1753,6 +1761,28 @@ namespace ufo
       return exp;
     }
   };
+
+  struct ArrAccessFilter : public std::unary_function<Expr, VisitAction>
+  {
+    ExprSet& terms;
+
+    ArrAccessFilter (ExprSet& _terms): terms(_terms) {};
+
+    VisitAction operator() (Expr exp)
+    {
+      if (isOp<STORE>(exp) || isOp<SELECT>(exp))
+      {
+        terms.insert(exp->arg(1));
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
+  inline void getArrAccessExprs (Expr exp, ExprSet& terms)
+  {
+    ArrAccessFilter aa (terms);
+    dagVisit (aa, exp);
+  }
 
   template<typename Range> static Expr simpleQE(Expr exp, Range& quantified, bool strict = false)
   {

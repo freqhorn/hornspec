@@ -67,12 +67,13 @@ namespace ufo
       for (auto & a : arrSelects)
       {
         postFac.addVar(a);
-        if (find(preFac.getVars().begin(),
-            preFac.getVars().end(), a->right()) == preFac.getVars().end())
+        Expr it = a->right();
+        if (bind::isIntConst(it) &&
+            find(preFac.getVars().begin(), preFac.getVars().end(), it) == preFac.getVars().end())
         {
-          postFac.addVar(a->right());
-          preFac.addVar(a->right());
-          forall_args.push_back(a->right()->left());
+          postFac.addVar(it);
+          preFac.addVar(it);
+          forall_args.push_back(it->left());
         }
       }
 

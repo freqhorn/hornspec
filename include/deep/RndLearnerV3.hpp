@@ -267,32 +267,107 @@ namespace ufo
       return propagate(invNum, conjoin(candidates[invNum], m_efac), false);
     }
 
+    // a simple method to generate properties of a larger Array range, given already proven ranges
+    void generalizeArrInvars (SamplFactory& sf)
+    {
+      if (sf.learnedExprs.size() > 1)
+      {
+        ExprVector its;
+        ExprVector posts;
+        ExprVector pres;
+        map<Expr, vector<pair<Expr, Expr>>> tmp;
+        Expr tmpVar = bind::intConst(mkTerm<string> ("_tmp_var", m_efac));
+        Expr arrVar = NULL;
+        for (auto & a : sf.learnedExprs)
+        {
+          if (!isOpX<FORALL>(a)) continue;
+          if (!isOpX<IMPL>(a->last())) continue;
+          ExprVector se;
+          filter (a->last()->last(), bind::IsSelect (), inserter(se, se.begin()));
+          if (se.size() == 1)
+          {
+            its.push_back(se[0]->right());
+            pres.push_back(a->last()->left());
+            posts.push_back(replaceAll(a->last()->right(), se[0], tmpVar));
+            tmp[a->last()->left()].push_back(make_pair(se[0]->right(), replaceAll(a->last()->right(), se[0], tmpVar)));
+            if (arrVar != NULL && arrVar != se[0]->left()) continue;
+            arrVar = se[0]->left();
+          }
+        }
+        if (tmp.size() > 0)
+        {
+          for (auto & a : tmp)
+          {
+            Expr distSelect = NULL;
+            bool toContinue = false;
+            for (auto & b : a.second)
+            {
+              toContinue = toContinue || (distSelect != NULL && distSelect != b.first);
+              distSelect = b.first;
+            }
+
+            if (toContinue)
+            {
+              Expr disjIts = mk<FALSE>(m_efac);
+              Expr disjPosts = mk<FALSE>(m_efac);
+              Expr tmpIt = bind::intConst(mkTerm<string> ("_tmp_it", m_efac));
+              for (auto & b : a.second)
+              {
+                disjIts = mk<OR>(disjIts, mk<EQ>(tmpIt, b.first));
+                disjPosts = mk<OR>(disjPosts, b.second);
+              }
+              ExprSet elementaryIts;
+              filter (disjIts, bind::IsConst (), inserter(elementaryIts, elementaryIts.begin()));
+              elementaryIts.erase(tmpIt);
+              if (elementaryIts.size() == 1)
+              {
+                AeValSolver ae(mk<TRUE>(m_efac), mk<AND>(disjIts, a.first), elementaryIts);
+                if (ae.solve())
+                {
+                  ExprVector args;
+                  Expr it = *elementaryIts.begin();
+                  args.push_back(it->left());
+                  Expr newPre = replaceAll(ae.getValidSubset(), tmpIt, it);
+                  args.push_back(mk<IMPL>(newPre, replaceAll(disjPosts, tmpVar, mk<SELECT>(arrVar, it))));
+                  Expr newCand = mknary<FORALL>(args);
+                  sf.learnedExprs.insert(newCand);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     void assignPrioritiesForLearned()
     {
-      bool progress = true;
+//      bool progress = true;
       for (auto & cand : candidates)
       {
         if (cand.second.size() > 0)
         {
-          ExprVector invVars;
           SamplFactory& sf = sfs[cand.first].back();
-          for (auto & a : invarVars[cand.first]) invVars.push_back(a.second);
           for (auto & b : cand.second)
           {
-            Expr learnedCand = normalizeDisj(b, invVars);
-            SamplFactory& sf = sfs[cand.first].back();
-            Sampl& s = sf.exprToSampl(learnedCand);
-            sf.assignPrioritiesForLearned();
-            if (!u.implies(sf.getAllLemmas(), learnedCand))
+            if (containsOp<FORALL>(b))
             {
-              sf.learnedExprs.insert(learnedCand);
-//              outs() << "     lemmas learned for " << *decls[cand.first] << ": " << *learnedCand << "\n";
+              sf.learnedExprs.insert(b);
             }
-            else progress = false;
+            else
+            {
+              ExprVector invVars;
+              for (auto & a : invarVars[cand.first]) invVars.push_back(a.second);
+              Expr learnedCand = normalizeDisj(b, invVars);
+              Sampl& s = sf.exprToSampl(learnedCand);
+              sf.assignPrioritiesForLearned();
+              if (!u.implies(sf.getAllLemmas(), learnedCand))
+                sf.learnedExprs.insert(learnedCand);
+            }
+//            else progress = false;
           }
         }
       }
-      //      if (progress) updateGrammars(); // GF: doesn't work great :(
+//            if (progress) updateGrammars(); // GF: doesn't work great :(
     }
 
     bool synthesize(int maxAttempts, char * outfile)
@@ -308,6 +383,10 @@ namespace ufo
         candidates.clear();
         SamplFactory& sf = sfs[invNum].back();
         Expr cand = sf.getFreshCandidate(i < 25); // try simple array candidates first
+        if (isOpX<FORALL>(cand) && isOpX<IMPL>(cand->last()))
+        {
+          if (!u.isSat(cand->last()->left())) cand = NULL;
+        }
         if (cand == NULL) continue;
 //        outs () << " - - - sampled cand: #" << i << ": " << *cand << "\n";
 
@@ -315,6 +394,7 @@ namespace ufo
         if (checkCand(invNum))
         {
           assignPrioritiesForLearned();
+          generalizeArrInvars(sf);
           if (checkAllLemmas())
           {
             outs () << "Success after " << (i+1) << " iterations\n";
@@ -396,7 +476,6 @@ namespace ufo
     bool multiHoudini(vector<HornRuleExt*> worklist, bool recur = true)
     {
       if (!anyProgress(worklist)) return false;
-
       map<int, ExprVector> candidatesTmp = candidates;
       bool res1 = true;
       for (auto &h: worklist)
@@ -468,9 +547,14 @@ namespace ufo
       ExprSet candsFromCode;
       bool analizedExtras = false;
       bool isFalse = false;
+
+      // for Arrays
+      Expr tmpArrIter;
+      ExprSet tmpArrAccess;
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
+
         SeedMiner sm (hr, invRel, invarVars[ind], sf.lf.nonlinVars);
         if (analizeCode) sm.analizeCode();
         else sm.candidates.clear();
@@ -482,12 +566,46 @@ namespace ufo
 
         for (auto &cand : sm.candidates) candsFromCode.insert(cand);
 
-        // for arrays (currently, use only query)
-        if (analizeCode && hr.isQuery && !sm.arrIterRanges.empty())
+        // for arrays
+        if (analizeCode && ruleManager.hasArrays)
         {
-          arrCands[ind] = sm.arrCands;
-          arrSelects[ind] = sm.arrSelects;
-          arrIterRanges[ind] = sm.arrIterRanges;
+          arrCands[ind].insert(sm.arrCands.begin(), sm.arrCands.end());
+          arrSelects[ind].insert(sm.arrSelects.begin(), sm.arrSelects.end());
+          arrIterRanges[ind].insert(sm.arrIterRanges.begin(), sm.arrIterRanges.end());
+
+          // extra range constraints
+          if (sm.arrAccessVars.size() == 1)
+          {
+            tmpArrIter = *sm.arrAccessVars.begin();
+            sm.candidates.clear();
+            sm.analizeExtras(preconds[ind]);
+            for (auto cand : sm.candidates)
+            {
+              cand = replaceAll(cand, iterators[ind], tmpArrIter);
+              if (!u.implies(conjoin(arrIterRanges[ind], m_efac), cand))
+                arrIterRanges[ind].insert(cand);
+            }
+          }
+          // extra access expressions (like i*2 or i*2+1) to be post-processed outside the loop
+          getArrAccessExprs(hr.body, tmpArrAccess);
+        }
+      }
+
+      if (tmpArrIter != NULL)
+      {
+        for (auto & e : tmpArrAccess)
+        {
+          for (auto & a : invarVars[ind])      // TODO: a more precise way of identifying array vars
+          {
+            if (bind::isConst<ARRAY_TY>(a.second))
+            {
+              Expr sel = mk<SELECT>(a.second, e);
+              Expr newSel = replaceAll(sel, iterators[ind], tmpArrIter);
+              arrSelects[ind].insert(newSel);
+              // currently, a hack. TODO: automatic mining these predicates from CHCs
+              arrCands[ind].insert(mk<GEQ>(mk<MULT>(mkTerm (mpz_class (1), m_efac), newSel), mkTerm (mpz_class (0), m_efac)));
+            }
+          }
         }
       }
 
@@ -613,7 +731,7 @@ namespace ufo
             {
               varz.push_back(bind::fapp(a->arg(i)));
             }
-            m_smt_solver.assertForallExpr(varz, a);
+            m_smt_solver.assertForallExpr(varz, a->last());
           }
           else
           {
@@ -632,21 +750,11 @@ namespace ufo
         for (auto a : lms)
         {
           for (auto & v : invarVars[ind]) a = replaceAll(a, v.second, hr.dstVars[v.first]);
-          if (isOpX<FORALL>(a))
-          {
-            Expr b = a->arg(a->arity() - 1);
-            negged.insert(mk<NEG>(b));
-          }
-          else
-          {
-            negged.insert(mk<NEG>(a));
-          }
+          negged.insert(mkNeg(a));
         }
         m_smt_solver.assertExpr(disjoin(negged, m_efac));
       }
-
-      bool res = !m_smt_solver.solve ();
-      return res;
+      return !m_smt_solver.solve ();
     }
 
     void initArrayStuff(BndExpl& bnd)

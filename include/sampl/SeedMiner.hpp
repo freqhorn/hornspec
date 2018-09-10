@@ -17,6 +17,7 @@ namespace ufo
     ExprSet arrCands;
     ExprSet arrSelects;
     ExprSet arrIterRanges;
+    ExprSet arrAccessVars;
 
     ExprSet candidates;
     set<int> intConsts;
@@ -59,6 +60,7 @@ namespace ufo
           invAndIterVars.push_back(a);
           assert (bind::isIntConst(a->right())); // complex indexes like A[i+1] are supposed to be rewritten in Horn.hpp
 
+          arrAccessVars.insert(a->right());
           if (find(invAndIterVars.begin(), invAndIterVars.end(),
                    a->right()) == invAndIterVars.end())
             invAndIterVars.push_back (a->right());
@@ -229,6 +231,11 @@ namespace ufo
     {
       for (auto &cnj : extra)
         coreProcess(propagateEqualities(cnj));
+    }
+
+    void analizeExtras(Expr extra)
+    {
+      coreProcess(propagateEqualities(extra));
     }
 
     void analizeCode()
