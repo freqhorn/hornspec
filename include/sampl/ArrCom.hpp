@@ -20,6 +20,7 @@ namespace ufo
     LAfactory preFac;
     LAfactory postFac;
     Expr pre;
+    density postOrAritiesDensity;
 
     public:
 
@@ -50,16 +51,22 @@ namespace ufo
 
       lf.initialize();
       set<int> orArities;
-      orArities.insert(1);                     // hardcode for now
+      for (auto & a : cands)
+      {
+        int ar = isOpX<OR>(a) ? a->arity() : 1;
+        postOrAritiesDensity[ar] ++;
+        orArities.insert(ar);
+      }
       lf.initDensities(orArities);
 
       for (auto & a : cands)
       {
         LAdisj b;
         lf.exprToLAdisj(a, b);
-        lf.calculateStatistics(b, 1, 0, 0);    // hardcode for now
+        lf.calculateStatistics(b, b.arity, 0, 0);
       }
-      lf.stabilizeDensities(1, eps, 1);        // hardcode for now
+
+      for (auto & ar : orArities) lf.stabilizeDensities(ar, eps, 1);
     }
 
     void initialize(ExprVector& intVars, ExprSet& arrCands, ExprSet& arrSelects, ExprSet& arrRange)
@@ -96,7 +103,8 @@ namespace ufo
       // TODO: 1) pruning based on dependencies of pre and expr1,
       //       2) pruning based on dependencies of expr1 and expr2,
       //       3) conjunctive and disjunctive expr1 and expr2
-      if (preFac.guessTerm(expr1, 1) && postFac.guessTerm(expr2, 1))
+      int arity = chooseByWeight(postOrAritiesDensity);
+      if (preFac.guessTerm(expr1, 1) && postFac.guessTerm(expr2, arity))
       {
         ExprVector args = forall_args;
         args.push_back(mk<IMPL>(mk<AND>(pre, preFac.toExpr(expr1)), postFac.toExpr(expr2)));
@@ -112,7 +120,8 @@ namespace ufo
     Expr guessSimplTerm ()
     {
       LAdisj expr2;
-      if (postFac.guessTerm(expr2, 1))
+      int arity = chooseByWeight(postOrAritiesDensity);
+      if (postFac.guessTerm(expr2, arity))
       {
         ExprVector args = forall_args;
         args.push_back(mk<IMPL>(pre, postFac.toExpr(expr2)));

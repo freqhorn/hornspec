@@ -383,7 +383,7 @@ namespace ufo
         candidates.clear();
         SamplFactory& sf = sfs[invNum].back();
         Expr cand = sf.getFreshCandidate(i < 25); // try simple array candidates first
-        if (isOpX<FORALL>(cand) && isOpX<IMPL>(cand->last()))
+        if (cand != NULL && isOpX<FORALL>(cand) && isOpX<IMPL>(cand->last()))
         {
           if (!u.isSat(cand->last()->left())) cand = NULL;
         }
