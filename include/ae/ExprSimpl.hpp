@@ -1550,7 +1550,6 @@ namespace ufo
       
       if (isOpX<ITE>(rhs))
       {
-        
         Expr iteCond = unfoldITE (rhs->arg(0));
         Expr iteC1 = rhs->arg(1);
         Expr iteC2 = rhs->arg(2);
@@ -1564,7 +1563,6 @@ namespace ufo
         //          outs () << "     [1b] ---> " << *term << "\n";
         //          outs () << "     [1e] ---> " << *transformed << "\n\n";
         return transformed;
-        
       }
       else if (isOpX<ITE>(lhs))
       {
@@ -1666,8 +1664,18 @@ namespace ufo
           return transformed;
         }
       }
+      else if (isOpX<STORE>(lhs))
+      {
+        Expr arrVar = lhs->left();
+        if (isOpX<ITE>(arrVar))
+        {
+          return unfoldITE (reBuildCmp(term,
+                mk<ITE>(arrVar->left(),
+                       mk<STORE>(arrVar->right(), lhs->right(), lhs->last()),
+                       mk<STORE>(arrVar->last(), lhs->right(), lhs->last())), rhs));
+        }
+      }
     }
-    
     return term;
   }
   
@@ -1762,26 +1770,19 @@ namespace ufo
     }
   };
 
-  struct ArrAccessFilter : public std::unary_function<Expr, VisitAction>
+  template<typename Range> static void update_min_value(ExprMap& m, Expr key, Expr value, Range& quantified, ExprSet& newCnjs)
   {
-    ExprSet& terms;
-
-    ArrAccessFilter (ExprSet& _terms): terms(_terms) {};
-
-    VisitAction operator() (Expr exp)
+    // just heuristic
+    if (m[key] == NULL)
     {
-      if (isOp<STORE>(exp) || isOp<SELECT>(exp))
-      {
-        terms.insert(exp->arg(1));
-      }
-      return VisitAction::doKids ();
+      m[key] = value;
     }
-  };
-
-  inline void getArrAccessExprs (Expr exp, ExprSet& terms)
-  {
-    ArrAccessFilter aa (terms);
-    dagVisit (aa, exp);
+    else if (emptyIntersect(value, quantified) || treeSize(value) < treeSize(m[key]))
+    {
+      newCnjs.insert(mk<EQ>(key, m[key]));
+      m[key] = value;
+    }
+    else newCnjs.insert(mk<EQ>(key, value));
   }
 
   template<typename Range> static Expr simpleQE(Expr exp, Range& quantified, bool strict = false)
@@ -1798,18 +1799,16 @@ namespace ufo
       {
         for (auto & b : quantified)
         {
-          if (eqs[b] != NULL) continue;
-
-          if (a->left() == b && emptyIntersect(a->right(), quantified))
+          if (a->left() == b && (!strict || emptyIntersect(a->right(), quantified)))
           {
             eq = true;
-            eqs[b] = a->right();
+            update_min_value(eqs, b, a->right(), quantified, newCnjs);
             break;
           }
-          else if (a->right() == b && emptyIntersect(a->left(), quantified))
+          else if (a->right() == b && (!strict || emptyIntersect(a->left(), quantified)))
           {
             eq = true;
-            eqs[b] = a->left();
+            update_min_value(eqs, b, a->left(), quantified, newCnjs);
             break;
           }
         }
@@ -1818,7 +1817,31 @@ namespace ufo
     }
 
     Expr qed = conjoin(newCnjs, exp->getFactory());
-    for (auto & a : eqs) qed = replaceAll(qed, a.first, a.second);
+    ExprSet used;
+    while (true)
+    {
+      bool toBreak = true;
+      for (auto & a : eqs)
+      {
+        if (a.first == NULL || a.second == NULL) continue;
+        if (!emptyIntersect(a.first, qed))
+        {
+          qed = replaceAll(qed, a.first, a.second);
+          used.insert(a.first);
+          toBreak = false;
+        }
+      }
+      if (toBreak) break;
+    }
+
+    newCnjs.clear();
+    getConj(qed, newCnjs);
+    for (auto & a : eqs)
+    {
+      if (find(used.begin(), used.end(), a.first) == used.end())
+        newCnjs.insert(mk<EQ>(a.first, a.second));
+    }
+    qed = conjoin(newCnjs, exp->getFactory());
     if (!strict) return qed;
 
     // check if there are some not eliminated vars
@@ -1829,7 +1852,28 @@ namespace ufo
     // otherwise result is incomplete
     return mk<TRUE>(exp->getFactory());
   }
-  
+
+  struct QESubexpr
+  {
+    ExprVector& quantified;
+    QESubexpr (ExprVector& _quantified): quantified(_quantified) {};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<AND>(exp) && !containsOp<OR>(exp))
+      {
+        return simpleQE(exp, quantified);
+      }
+      return exp;
+    }
+  };
+
+  inline static Expr simpleQERecurs(Expr exp, ExprVector& quantified)
+  {
+    RW<QESubexpr> a(new QESubexpr(quantified));
+    return dagVisit (a, exp);
+  }
+
   inline static Expr rewriteNegAnd(Expr exp)
   {
     RW<NegAndRewriter> a(new NegAndRewriter());
@@ -2325,24 +2369,45 @@ namespace ufo
     }
   }
 
+  Expr processNestedStores (Expr exp, ExprSet& cnjs)
+  {
+    // TODO: double check if cells are overwritten
+    Expr arrVar = exp->left();
+    if (isOpX<STORE>(arrVar)) arrVar = processNestedStores(arrVar, cnjs);
+    Expr indVar = exp->right();
+    Expr valVar = exp->last();
+    cnjs.insert(mk<EQ>(mk<SELECT>(arrVar, indVar), valVar));
+    return arrVar;
+  }
+
   struct TransitionOverapprox
   {
     ExprVector& srcVars;
     ExprVector& dstVars;
 
     TransitionOverapprox (ExprVector& _srcVars, ExprVector& _dstVars):
-    srcVars(_srcVars), dstVars(_dstVars) {};
+      srcVars(_srcVars), dstVars(_dstVars) {};
 
     Expr operator() (Expr exp)
     {
       if (isOp<ComparissonOp>(exp) && !containsOp<ITE>(exp))
       {
+        ExprSet tmp;
+        if (isOpX<STORE>(exp->left()))
+        {
+          processNestedStores(exp->left(), tmp);
+          return conjoin(tmp, exp->getFactory());
+        }
+        else if (isOpX<STORE>(exp->right()))
+        {
+          processNestedStores(exp->right(), tmp);
+          return conjoin(tmp, exp->getFactory());
+        }
         ExprVector av;
         filter (exp, bind::IsConst (), inserter(av, av.begin()));
         if (!emptyIntersect(av, srcVars) && !emptyIntersect(av, dstVars))
-        return mk<TRUE>(exp->getFactory());
+          return mk<TRUE>(exp->getFactory());
       }
-
       return exp;
     }
   };
@@ -2487,6 +2552,51 @@ namespace ufo
   {
     RW<TransitionOverapprox> rw(new TransitionOverapprox(srcVars, dstVars));
     return dagVisit (rw, exp);
+  }
+
+  inline static Expr mergeIneqs (Expr e1, Expr e2)
+  {
+    if (isOpX<NEG>(e1)) e1 = mkNeg(e1->last());
+    if (isOpX<NEG>(e2)) e2 = mkNeg(e2->last());
+
+    if (isOpX<GEQ>(e1) && isOpX<GEQ>(e2) && e1->right() == e2->left())
+      return mk<GEQ>(e1->left(), e2->right());
+    if (isOpX<GT>(e1) && isOpX<GT>(e2) && e1->right() == e2->left())
+      return mk<GT>(e1->left(), e2->right());
+    if (isOpX<GEQ>(e1) && isOpX<GT>(e2) && e1->right() == e2->left())
+      return mk<GT>(e1->left(), e2->right());
+    if (isOpX<GT>(e1) && isOpX<GEQ>(e2) && e1->right() == e2->left())
+      return mk<GT>(e1->left(), e2->right());
+
+    if (isOpX<LEQ>(e1) && isOpX<LEQ>(e2) && e1->right() == e2->left())
+      return mk<LEQ>(e1->left(), e2->right());
+    if (isOpX<LT>(e1) && isOpX<LT>(e2) && e1->right() == e2->left())
+      return mk<LT>(e1->left(), e2->right());
+    if (isOpX<LEQ>(e1) && isOpX<LT>(e2) && e1->right() == e2->left())
+      return mk<LT>(e1->left(), e2->right());
+    if (isOpX<LT>(e1) && isOpX<LEQ>(e2) && e1->right() == e2->left())
+      return mk<LT>(e1->left(), e2->right());
+
+    if (isOpX<LEQ>(e1) && isOpX<GEQ>(e2) && e1->right() == e2->right())
+      return mk<LEQ>(e1->left(), e2->left());
+    if (isOpX<LT>(e1) && isOpX<GT>(e2) && e1->right() == e2->right())
+      return mk<LT>(e1->left(), e2->left());
+    if (isOpX<LEQ>(e1) && isOpX<GT>(e2) && e1->right() == e2->right())
+      return mk<LT>(e1->left(), e2->left());
+    if (isOpX<LT>(e1) && isOpX<GEQ>(e2) && e1->right() == e2->right())
+      return mk<LT>(e1->left(), e2->left());
+
+    if (isOpX<GEQ>(e1) && isOpX<LEQ>(e2) && e1->right() == e2->right())
+      return mk<GEQ>(e1->left(), e2->left());
+    if (isOpX<GT>(e1) && isOpX<LT>(e2) && e1->right() == e2->right())
+      return mk<GT>(e1->left(), e2->left());
+    if (isOpX<GEQ>(e1) && isOpX<LT>(e2) && e1->right() == e2->right())
+      return mk<GT>(e1->left(), e2->left());
+    if (isOpX<GT>(e1) && isOpX<LEQ>(e2) && e1->right() == e2->right())
+      return mk<GT>(e1->left(), e2->left());
+
+    // TODO: support more cases
+    return NULL;
   }
 
   template <typename T> static void computeTransitiveClosure(ExprSet& r, ExprSet& tr)

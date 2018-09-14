@@ -515,7 +515,7 @@ namespace ufo
     {
       ExprSet cnjs;
       ExprSet newCnjs;
-      getConj(hr->body, cnjs);
+      getConj(simpleQE(hr->body, hr->dstVars), cnjs);
       for (auto &a : cnjs)
       {
         if (emptyIntersect(a, hr->dstVars) && emptyIntersect(a, hr->locVars)) newCnjs.insert(a);

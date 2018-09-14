@@ -44,28 +44,25 @@ namespace ufo
           getLinCombConsts(a, arrConsts);
         }
       }
-
       for (auto & a : intVars) lf.addVar(a);
       for (auto & a : arrConsts) lf.addConst(a);
       for (auto & a : arrCoefs) lf.addIntCoef(a);
 
       lf.initialize();
       set<int> orArities;
-      for (auto & a : cands)
-      {
-        int ar = isOpX<OR>(a) ? a->arity() : 1;
-        postOrAritiesDensity[ar] ++;
-        orArities.insert(ar);
-      }
-      lf.initDensities(orArities);
-
+      vector <LAdisj> laDisjs;
       for (auto & a : cands)
       {
         LAdisj b;
         lf.exprToLAdisj(a, b);
-        lf.calculateStatistics(b, b.arity, 0, 0);
+        laDisjs.push_back(b);
+        int ar = b.arity;
+        postOrAritiesDensity[ar] ++;
+        orArities.insert(ar);
       }
 
+      lf.initDensities(orArities);
+      for (auto & b : laDisjs) lf.calculateStatistics(b, b.arity, 0, 0);
       for (auto & ar : orArities) lf.stabilizeDensities(ar, eps, 1);
     }
 
@@ -94,7 +91,7 @@ namespace ufo
       initializeLAfactory(preFac, arrRange, intVars, 1);
       initializeLAfactory(postFac, arrCands, intVars, 0);
     }
-    
+
     Expr guessTerm ()
     {
       LAdisj expr1;

@@ -171,20 +171,17 @@ namespace ufo
       ExprSet iterVars;
       getArrCandIters(invNum, iterVars);
       Expr precond = preconds[invNum];
-
       ExprSet cnjs;
       ExprSet newCnjs;
       getConj(cand->last()->left(), cnjs);
-
       // TODO: support the case when precond has two or more conjuncts
       for (auto & a : iterVars)
         for (auto & b : cnjs)
-          if (u.isEquiv(replaceAll(b, a, iterators[invNum]), precond))
+          if (u.implies(replaceAll(b, a, iterators[invNum]), precond))
             newCnjs.insert(b);
 
       if (newCnjs.size() != 1) return cand;
       Expr preCand = *newCnjs.begin();
-
       cnjs.clear();
       newCnjs.clear();
       getConj(body, cnjs);
@@ -194,21 +191,27 @@ namespace ufo
 
       Expr bodyRestr = conjoin(newCnjs, m_efac);
 
-      ExprSet qVars;
-      ExprSet vars1;
-      ExprSet vars2;
-      filter (preCand, bind::IsConst (), inserter(vars1, vars1.begin()));
-      filter (bodyRestr, bind::IsConst (), inserter(vars2, vars2.begin()));
+      Expr range = mergeIneqs(bodyRestr, preCand);
+      if (range == NULL)
+      {
+        ExprSet qVars;
+        ExprSet vars1;
+        ExprSet vars2;
+        filter (preCand, bind::IsConst (), inserter(vars1, vars1.begin()));
+        filter (bodyRestr, bind::IsConst (), inserter(vars2, vars2.begin()));
 
-      for (auto & v1 : vars1)
-        if (find(vars2.begin(), vars2.end(), v1) != vars2.end()) qVars.insert(v1);
+        for (auto & v1 : vars1)
+          if (find(vars2.begin(), vars2.end(), v1) != vars2.end()) qVars.insert(v1);
 
-      if (qVars.empty()) return cand;
+        if (qVars.empty()) return cand;
 
-      AeValSolver ae(mk<TRUE>(m_efac), mk<AND>(preCand, bodyRestr), qVars);
-      if (ae.solve())
-        return replaceAll(cand, preCand, ae.getValidSubset());
-
+        AeValSolver ae(mk<TRUE>(m_efac), mk<AND>(preCand, bodyRestr), qVars);
+        if (ae.solve())
+        {
+          range = ae.getValidSubset();
+        }
+      }
+      cand = replaceAll(cand, preCand, range);
       return cand;
     }
 
@@ -275,21 +278,23 @@ namespace ufo
         ExprVector its;
         ExprVector posts;
         ExprVector pres;
-        map<Expr, vector<pair<Expr, Expr>>> tmp;
+        map<Expr, ExprVector> tmp;
         Expr tmpVar = bind::intConst(mkTerm<string> ("_tmp_var", m_efac));
         Expr arrVar = NULL;
         for (auto & a : sf.learnedExprs)
         {
           if (!isOpX<FORALL>(a)) continue;
-          if (!isOpX<IMPL>(a->last())) continue;
+          Expr learnedQF = a->last();
+          if (!isOpX<IMPL>(learnedQF)) continue;
           ExprVector se;
-          filter (a->last()->last(), bind::IsSelect (), inserter(se, se.begin()));
+          filter (learnedQF->last(), bind::IsSelect (), inserter(se, se.begin()));
           if (se.size() == 1)
           {
             its.push_back(se[0]->right());
-            pres.push_back(a->last()->left());
-            posts.push_back(replaceAll(a->last()->right(), se[0], tmpVar));
-            tmp[a->last()->left()].push_back(make_pair(se[0]->right(), replaceAll(a->last()->right(), se[0], tmpVar)));
+            Expr postReplaced = replaceAll(learnedQF->right(), se[0], tmpVar);
+            pres.push_back(learnedQF->left());
+            posts.push_back(postReplaced);
+            tmp[mk<AND>(learnedQF->left(), postReplaced)].push_back(se[0]->right());
             if (arrVar != NULL && arrVar != se[0]->left()) continue;
             arrVar = se[0]->left();
           }
@@ -298,37 +303,24 @@ namespace ufo
         {
           for (auto & a : tmp)
           {
-            Expr distSelect = NULL;
-            bool toContinue = false;
-            for (auto & b : a.second)
-            {
-              toContinue = toContinue || (distSelect != NULL && distSelect != b.first);
-              distSelect = b.first;
-            }
-
-            if (toContinue)
+            if (a.second.size() > 1)
             {
               Expr disjIts = mk<FALSE>(m_efac);
-              Expr disjPosts = mk<FALSE>(m_efac);
               Expr tmpIt = bind::intConst(mkTerm<string> ("_tmp_it", m_efac));
-              for (auto & b : a.second)
-              {
-                disjIts = mk<OR>(disjIts, mk<EQ>(tmpIt, b.first));
-                disjPosts = mk<OR>(disjPosts, b.second);
-              }
+              for (auto & b : a.second) disjIts = mk<OR>(disjIts, mk<EQ>(tmpIt, b));
               ExprSet elementaryIts;
               filter (disjIts, bind::IsConst (), inserter(elementaryIts, elementaryIts.begin()));
               elementaryIts.erase(tmpIt);
               if (elementaryIts.size() == 1)
               {
-                AeValSolver ae(mk<TRUE>(m_efac), mk<AND>(disjIts, a.first), elementaryIts);
+                AeValSolver ae(mk<TRUE>(m_efac), mk<AND>(disjIts, a.first->left()), elementaryIts);
                 if (ae.solve())
                 {
                   ExprVector args;
                   Expr it = *elementaryIts.begin();
                   args.push_back(it->left());
                   Expr newPre = replaceAll(ae.getValidSubset(), tmpIt, it);
-                  args.push_back(mk<IMPL>(newPre, replaceAll(disjPosts, tmpVar, mk<SELECT>(arrVar, it))));
+                  args.push_back(mk<IMPL>(newPre, replaceAll(a.first->right(), tmpVar, mk<SELECT>(arrVar, it))));
                   Expr newCand = mknary<FORALL>(args);
                   sf.learnedExprs.insert(newCand);
                 }
@@ -551,6 +543,9 @@ namespace ufo
       // for Arrays
       Expr tmpArrIter;
       ExprSet tmpArrAccess;
+      ExprSet tmpArrSelects;
+      ExprSet tmpArrCands;
+      ExprSet tmpArrAccessVars;
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
@@ -569,44 +564,40 @@ namespace ufo
         // for arrays
         if (analizeCode && ruleManager.hasArrays)
         {
-          arrCands[ind].insert(sm.arrCands.begin(), sm.arrCands.end());
-          arrSelects[ind].insert(sm.arrSelects.begin(), sm.arrSelects.end());
+          tmpArrCands.insert(sm.arrCands.begin(), sm.arrCands.end());
+          tmpArrSelects.insert(sm.arrSelects.begin(), sm.arrSelects.end());
+          tmpArrAccessVars.insert(sm.arrAccessVars.begin(), sm.arrAccessVars.end());
           arrIterRanges[ind].insert(sm.arrIterRanges.begin(), sm.arrIterRanges.end());
 
           // extra range constraints
-          if (sm.arrAccessVars.size() == 1)
+          if (sm.arrAccessVars.size() > 0)
           {
-            tmpArrIter = *sm.arrAccessVars.begin();
             sm.candidates.clear();
             sm.analizeExtras(preconds[ind]);
             for (auto cand : sm.candidates)
             {
-              cand = replaceAll(cand, iterators[ind], tmpArrIter);
-              if (!u.implies(conjoin(arrIterRanges[ind], m_efac), cand))
-                arrIterRanges[ind].insert(cand);
+              for (auto & iter : tmpArrAccessVars)
+              {
+                cand = replaceAll(cand, iterators[ind], iter);
+                if (!u.implies(conjoin(arrIterRanges[ind], m_efac), cand))
+                {
+                  arrIterRanges[ind].insert(cand);
+                }
+              }
             }
           }
-          // extra access expressions (like i*2 or i*2+1) to be post-processed outside the loop
-          getArrAccessExprs(hr.body, tmpArrAccess);
         }
       }
 
-      if (tmpArrIter != NULL)
+      for (auto & a : tmpArrSelects)
       {
-        for (auto & e : tmpArrAccess)
-        {
-          for (auto & a : invarVars[ind])      // TODO: a more precise way of identifying array vars
-          {
-            if (bind::isConst<ARRAY_TY>(a.second))
-            {
-              Expr sel = mk<SELECT>(a.second, e);
-              Expr newSel = replaceAll(sel, iterators[ind], tmpArrIter);
-              arrSelects[ind].insert(newSel);
-              // currently, a hack. TODO: automatic mining these predicates from CHCs
-              arrCands[ind].insert(mk<GEQ>(mk<MULT>(mkTerm (mpz_class (1), m_efac), newSel), mkTerm (mpz_class (0), m_efac)));
-            }
-          }
-        }
+        for (auto iter : tmpArrAccessVars)
+          arrSelects[ind].insert(replaceAll(a, iterators[ind], iter));
+      }
+      for (auto & a : tmpArrCands)
+      {
+        for (auto iter : tmpArrAccessVars)
+          arrCands[ind].insert(replaceAll(a, iterators[ind], iter));
       }
 
       for (auto & cand : candsFromCode)

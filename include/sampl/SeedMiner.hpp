@@ -33,8 +33,9 @@ namespace ufo
     SeedMiner(HornRuleExt& r, Expr& d, map<int, Expr>& v, ExprMap& e) :
       hr(r), invRel(d), invVars(v), extraVars(e), m_efac(d->getFactory()) {};
 
-    void getSelectTmpl (Expr tmpl)
+    void getArrRange (Expr tmpl)
     {
+      // keep using this method for a while; to replace by something smarter
       ExprSet dsjs;
       ExprSet tmp;
       getDisj(tmpl, dsjs);
@@ -51,38 +52,75 @@ namespace ufo
           continue;
         }
 
+        for (auto & a : se)
+        {
+          Expr var = a->right();
+          if (bind::isIntConst(var) && find(invAndIterVarsAll.begin(),
+                    invAndIterVarsAll.end(), var) == invAndIterVarsAll.end())
+          {
+            arrAccessVars.insert(var);
+            if (find(invAndIterVarsAll.begin(), invAndIterVarsAll.end(),
+                     var) == invAndIterVarsAll.end())
+              invAndIterVarsAll.push_back(var);
+          }
+        }
+      }
+
+      for (auto & e : tmp)
+      {
+        if (emptyIntersect(e, arrAccessVars)) continue;
+        ExprSet rangeTmp;
+        getConj(convertToGEandGT(e), rangeTmp);
+        for (auto & a : rangeTmp) arrIterRanges.insert(normalizeDisj(a, invAndIterVarsAll));
+      }
+    }
+
+    void addArrCand (Expr tmpl)
+    {
+      ExprSet dsjs;
+      ExprSet newDsjs;
+      getDisj(tmpl, dsjs);
+
+      for (auto dsj : dsjs)
+      {
+        ExprSet se;
+        filter (dsj, bind::IsSelect (), inserter(se, se.begin()));
+        if (se.size() == 0) continue;
+
         ExprVector invAndIterVars;
         for (auto & a : invVars) invAndIterVars.push_back(a.second);
 
         for (auto & a : se)
         {
           arrSelects.insert(a);
-          invAndIterVars.push_back(a);
-          assert (bind::isIntConst(a->right())); // complex indexes like A[i+1] are supposed to be rewritten in Horn.hpp
+          unique_push_back(a, invAndIterVars);
 
-          arrAccessVars.insert(a->right());
-          if (find(invAndIterVars.begin(), invAndIterVars.end(),
-                   a->right()) == invAndIterVars.end())
-            invAndIterVars.push_back (a->right());
-
-          if (find(invAndIterVarsAll.begin(), invAndIterVarsAll.end(),
-                   a->right()) == invAndIterVarsAll.end())
-            invAndIterVarsAll.push_back(a->right());
+          ExprSet vrs;
+          filter (a, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
+          for (auto & v : vrs) unique_push_back(v, invAndIterVars);
         }
 
         ExprSet arrCandsTmp;
         getConj(convertToGEandGT(dsj), arrCandsTmp);
-        for (auto & a : arrCandsTmp) arrCands.insert(normalizeDisj(a, invAndIterVars));
+        for (auto & a : arrCandsTmp)
+        {
+          Expr normalized = normalizeDisj(a, invAndIterVars);
+          ExprSet vrs;
+          filter (normalized, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
+          bool sanitized = true;
+          for (auto & b : vrs)
+          {
+            if (emptyIntersect(b, invAndIterVars))
+            {
+              sanitized = false;
+              break;
+            }
+          }
+          if (sanitized) newDsjs.insert(normalized);
+        }
       }
 
-      if (arrCands.size() == 0) return;
-
-      for (auto & e : tmp)
-      {
-        ExprSet rangeTmp;
-        getConj(convertToGEandGT(e), rangeTmp);
-        for (auto & a : rangeTmp) arrIterRanges.insert(normalizeDisj(a, invAndIterVarsAll));
-      }
+      arrCands.insert(disjoin(newDsjs, m_efac));
     }
 
     void addSeedHlp(Expr tmpl, ExprVector& vars, ExprSet& actualVars)
@@ -93,7 +131,7 @@ namespace ufo
       for (auto & dsj : dsjs)
       {
         ExprSet vrs;
-        expr::filter (dsj, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
+        filter (dsj, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
         bool found = true;
 
         for (auto & a : vrs)
@@ -129,7 +167,7 @@ namespace ufo
       {
         // get int constants from the normalized candidate
         ExprSet intConstsE;
-        expr::filter (tmpl, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
+        filter (tmpl, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
         for (auto &a : intConstsE) intConsts.insert(lexical_cast<int>(a));
         if (getLinCombCoefs(tmpl, intCoefs)) candidates.insert(tmpl);
       }
@@ -137,15 +175,20 @@ namespace ufo
 
     void addSeed(Expr term)
     {
-      ExprSet actualVars;
+      if (containsOp<SELECT>(term))
+      {
+        addArrCand(term);
+        return;
+      }
 
-      expr::filter (term, bind::IsConst(), std::inserter (actualVars, actualVars.begin ()));
+      ExprSet actualVars;
+      filter (term, bind::IsConst(), std::inserter (actualVars, actualVars.begin ()));
 
       term = rewriteMultAdd(term);
 
       bool locals = false;
       if (actualVars.size() == 0 || isTautology(term)) return;
-            
+
       // split each term to two seeds (for srcVars and dstVars)
 
       if (hr.srcRelation == invRel)
@@ -273,7 +316,8 @@ namespace ufo
 
       if (quantified.size() > 0)
       {
-        AeValSolver ae(mk<TRUE>(m_efac), hr.body, quantified);
+        body = simpleQE(hr.body, quantified);
+        AeValSolver ae(mk<TRUE>(m_efac), body, quantified);
         if (ae.solve())
         {
           Expr bodyTmp = ae.getValidSubset();
@@ -292,9 +336,9 @@ namespace ufo
       // for the query: add a negation of the entire non-recursive part:
       if (hr.isQuery)
       {
-        Expr massaged = propagateEqualities(body);
-        coreProcess(mkNeg(massaged));
-        getSelectTmpl(mkNeg(hr.body));
+        Expr massaged = mkNeg(propagateEqualities(body));
+        coreProcess(massaged);
+        getArrRange(massaged);
       }
       else if (hr.isFact)
       {
@@ -311,6 +355,7 @@ namespace ufo
           obtainSeeds(a);
         }
         e = overapproxTransitions(e, hr.srcVars, hr.dstVars);
+        e = simpleQERecurs(e, hr.locVars);
         e = simplifyBool(e);
         e = rewriteBoolEq(e);
         e = convertToGEandGT(e);
