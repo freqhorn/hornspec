@@ -541,7 +541,6 @@ namespace ufo
       bool isFalse = false;
 
       // for Arrays
-      Expr tmpArrIter;
       ExprSet tmpArrAccess;
       ExprSet tmpArrSelects;
       ExprSet tmpArrCands;
@@ -596,8 +595,9 @@ namespace ufo
       }
       for (auto & a : tmpArrCands)
       {
-        for (auto iter : tmpArrAccessVars)
-          arrCands[ind].insert(replaceAll(a, iterators[ind], iter));
+        if (!u.isEquiv(a, mk<TRUE>(m_efac)) && !u.isEquiv(a, mk<FALSE>(m_efac)))
+          for (auto iter : tmpArrAccessVars)
+            arrCands[ind].insert(replaceAll(a, iterators[ind], iter));
       }
 
       for (auto & cand : candsFromCode)
@@ -668,6 +668,33 @@ namespace ufo
         {
           outs () << "Success after bootstrapping\n";
           return true;
+        }
+      }
+
+      // try array candidates one-by-one (adapted from `synthesize`)
+      // TODO: batching
+      if (ruleManager.hasArrays)
+      {
+        for (int i = 0; i < invNumber; i++)
+        {
+          SamplFactory& sf = sfs[i].back();
+          for (auto & c : arrCands[i])
+          {
+            Expr cand = sf.af.getSimplCand(c);
+//            outs () << " - - - bootstrapped cand: " << *cand << "\n";
+
+            if (!addCandidate(i, cand)) continue;
+            if (checkCand(i))
+            {
+              assignPrioritiesForLearned();
+              generalizeArrInvars(sf);
+              if (checkAllLemmas())
+              {
+                outs () << "Success after bootstrapping\n";
+                return true;
+              }
+            }
+          }
         }
       }
       return false;

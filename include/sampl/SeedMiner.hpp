@@ -55,6 +55,13 @@ namespace ufo
         for (auto & a : se)
         {
           Expr var = a->right();
+          if (isOpX<MPZ>(var))
+          {
+            string varName = "_FH_tmp_iter_" + lexical_cast<string>(var);
+            Expr newVar = bind::intConst(mkTerm<string> (varName, m_efac));
+            tmp.insert(mk<EQ>(newVar, var));
+            var = newVar;
+          }
           if (bind::isIntConst(var) && find(invAndIterVarsAll.begin(),
                     invAndIterVarsAll.end(), var) == invAndIterVarsAll.end())
           {

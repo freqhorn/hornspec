@@ -283,12 +283,7 @@ namespace ufo
         hr.body = conjoin(lin, m_efac);
         hr.assignVarsAndRewrite (origSrcSymbs, invVars[hr.srcRelation],
                                  origDstSymbs, invVars[hr.dstRelation]);
-        hr.body = simpleQE(hr.body, hr.locVars);
-        if (hasArrays)
-        {
-          normalizeSelects(hr.body);
-//          uniqueizeSelects(hr.body); // maybe will be needed some time later?
-        }
+        hr.body = simpleQE(simpleQE(hr.body, hr.locVars), hr.dstVars);
       }
 
       // remove useless rules
@@ -515,7 +510,7 @@ namespace ufo
     {
       ExprSet cnjs;
       ExprSet newCnjs;
-      getConj(simpleQE(hr->body, hr->dstVars), cnjs);
+      getConj(hr->body, cnjs);
       for (auto &a : cnjs)
       {
         if (emptyIntersect(a, hr->dstVars) && emptyIntersect(a, hr->locVars)) newCnjs.insert(a);

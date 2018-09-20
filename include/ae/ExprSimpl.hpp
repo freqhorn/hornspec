@@ -1830,6 +1830,14 @@ namespace ufo
           used.insert(a.first);
           toBreak = false;
         }
+        for (auto & b : eqs)
+        {
+          if (a == b) continue;
+          if (!emptyIntersect(a.first, b.second))
+          {
+            b.second = replaceAll(b.second, a.first, a.second);
+          }
+        }
       }
       if (toBreak) break;
     }

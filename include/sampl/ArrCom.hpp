@@ -114,6 +114,14 @@ namespace ufo
       }
     }
 
+    // used for bootstrapping where `post` is one of the `arrCands`
+    Expr getSimplCand(Expr post)
+    {
+      ExprVector args = forall_args;
+      args.push_back(mk<IMPL>(pre, post));
+      return mknary<FORALL> (args);
+    }
+
     Expr guessSimplTerm ()
     {
       LAdisj expr2;
