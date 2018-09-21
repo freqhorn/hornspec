@@ -1785,7 +1785,7 @@ namespace ufo
     else newCnjs.insert(mk<EQ>(key, value));
   }
 
-  template<typename Range> static Expr simpleQE(Expr exp, Range& quantified, bool strict = false)
+  template<typename Range> static Expr simpleQE(Expr exp, Range& quantified, bool removeUsed = true, bool strict = false)
   {
     // rewrite just equalities
     ExprSet cnjs;
@@ -1827,7 +1827,7 @@ namespace ufo
         if (!emptyIntersect(a.first, qed))
         {
           qed = replaceAll(qed, a.first, a.second);
-          used.insert(a.first);
+          if (removeUsed) used.insert(a.first);
           toBreak = false;
         }
         for (auto & b : eqs)

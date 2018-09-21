@@ -75,7 +75,7 @@ namespace ufo
 
       if (findNonlin(formula) || containsOp<IDIV>(formula) || containsOp<MOD>(formula))
       {
-        Expr newCand = simpleQE(formula, quantified, true);
+        Expr newCand = simpleQE(formula, quantified, true, true);
         for (auto & v : invarVars[invNum]) newCand = replaceAll(newCand, varsRenameFrom[v.first], v.second);
         return newCand;
       }
@@ -275,12 +275,11 @@ namespace ufo
     {
       if (sf.learnedExprs.size() > 1)
       {
-        ExprVector its;
         ExprVector posts;
         ExprVector pres;
         map<Expr, ExprVector> tmp;
-        Expr tmpVar = bind::intConst(mkTerm<string> ("_tmp_var", m_efac));
-        Expr arrVar = NULL;
+        ExprVector tmpVars;
+        ExprVector arrVars;
         for (auto & a : sf.learnedExprs)
         {
           if (!isOpX<FORALL>(a)) continue;
@@ -288,17 +287,41 @@ namespace ufo
           if (!isOpX<IMPL>(learnedQF)) continue;
           ExprVector se;
           filter (learnedQF->last(), bind::IsSelect (), inserter(se, se.begin()));
-          if (se.size() == 1)
-          {
-            its.push_back(se[0]->right());
-            Expr postReplaced = replaceAll(learnedQF->right(), se[0], tmpVar);
-            pres.push_back(learnedQF->left());
-            posts.push_back(postReplaced);
-            tmp[mk<AND>(learnedQF->left(), postReplaced)].push_back(se[0]->right());
-            if (arrVar != NULL && arrVar != se[0]->left()) continue;
-            arrVar = se[0]->left();
+
+          bool multipleIndex = false;
+          for (auto & s : se) {
+            if (se[0]->right() != s->right()) {
+              multipleIndex = true;
+              break;
+            }
           }
+
+          if (se.size() == 0 || multipleIndex) continue;
+
+          if (arrVars.size() == 0) {
+            for (int index = 0; index < se.size(); index++) {
+              arrVars.push_back(se[index]->left());
+              tmpVars.push_back(bind::intConst(mkTerm<string> ("_tmp_var_" + lexical_cast<string>(index), m_efac)));
+            }
+          } else {
+            bool toContinue = false;
+            for (auto & s : se) {
+              if (find(arrVars.begin(), arrVars.end(), s->left()) == arrVars.end()) {
+                toContinue = true;
+                break;
+              }
+            }
+            if (toContinue) continue;
+          }
+
+          Expr postReplaced = learnedQF->right();
+          for (int index = 0; index < se.size() && index < tmpVars.size(); index++)
+            postReplaced = replaceAll(postReplaced, se[index], tmpVars[index]);
+          pres.push_back(learnedQF->left());
+          posts.push_back(postReplaced);
+          tmp[mk<AND>(learnedQF->left(), postReplaced)].push_back(se[0]->right());
         }
+
         if (tmp.size() > 0)
         {
           for (auto & a : tmp)
@@ -310,6 +333,7 @@ namespace ufo
               for (auto & b : a.second) disjIts = mk<OR>(disjIts, mk<EQ>(tmpIt, b));
               ExprSet elementaryIts;
               filter (disjIts, bind::IsConst (), inserter(elementaryIts, elementaryIts.begin()));
+              for (auto & a : sf.lf.getVars()) elementaryIts.erase(a);
               elementaryIts.erase(tmpIt);
               if (elementaryIts.size() == 1)
               {
@@ -320,7 +344,10 @@ namespace ufo
                   Expr it = *elementaryIts.begin();
                   args.push_back(it->left());
                   Expr newPre = replaceAll(ae.getValidSubset(), tmpIt, it);
-                  args.push_back(mk<IMPL>(newPre, replaceAll(a.first->right(), tmpVar, mk<SELECT>(arrVar, it))));
+                  Expr newPost = a.first->right();
+                  for (int index = 0; index < tmpVars.size() && index < arrVars.size(); index++)
+                    newPost = replaceAll(newPost, tmpVars[index], mk<SELECT>(arrVars[index], it));
+                  args.push_back(mk<IMPL>(newPre, newPost));
                   Expr newCand = mknary<FORALL>(args);
                   sf.learnedExprs.insert(newCand);
                 }

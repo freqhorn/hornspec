@@ -283,7 +283,7 @@ namespace ufo
         hr.body = conjoin(lin, m_efac);
         hr.assignVarsAndRewrite (origSrcSymbs, invVars[hr.srcRelation],
                                  origDstSymbs, invVars[hr.dstRelation]);
-        hr.body = simpleQE(simpleQE(hr.body, hr.locVars), hr.dstVars);
+        hr.body = simpleQE(simpleQE(hr.body, hr.locVars), hr.dstVars, false);
       }
 
       // remove useless rules
