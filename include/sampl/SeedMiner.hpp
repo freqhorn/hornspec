@@ -99,6 +99,12 @@ namespace ufo
 
         for (auto & a : se)
         {
+          if (isOpX<STORE>(a->first()) ||
+              isOpX<ITE>(a->first()))
+          {
+            // FIXME: should not fall here
+            return;
+          }
           arrSelects.insert(a);
           unique_push_back(a, invAndIterVars);
 
@@ -182,9 +188,18 @@ namespace ufo
 
     void addSeed(Expr term)
     {
-      if (containsOp<SELECT>(term))
+      if (containsOp<SELECT>(term) || containsOp<STORE>(term))
       {
-        addArrCand(term);
+        if (containsOp<STORE>(term) || containsOp<ITE>(term) || containsOp<AND>(term))
+        {
+          Expr term2 = unfoldITE(rewriteSelectStore(unfoldITE(term)));
+          if (term == term2)
+            return;
+          else  // mutual recursive call: extra processing for arrays
+            obtainSeeds(term2);
+        }
+        else
+          addArrCand(term);
         return;
       }
 
@@ -263,7 +278,8 @@ namespace ufo
       }
       else if (isOp<ComparissonOp>(term))
       {
-        obtainSeeds(convertToGEandGT(term));
+        if (containsOp<STORE>(term)) addSeed(term);
+        else obtainSeeds(convertToGEandGT(term));
       }
     }
 
@@ -349,7 +365,9 @@ namespace ufo
       }
       else if (hr.isFact)
       {
-        coreProcess(propagateEqualities(body));
+        Expr e = overapproxTransitions(body, hr.srcVars, hr.dstVars); // useful stuff for arrays
+        e = propagateEqualities(e);
+        coreProcess(e);
       }
       else
       {

@@ -1468,13 +1468,13 @@ namespace ufo
     return mk<NEG>(term);
   }
 
-  bool hasBoolSort(Expr e)
+  inline static bool hasBoolSort(Expr e)
   {
     if (bind::isBoolConst(e) || isOp<BoolOp>(e)) return true;
     return false;
   }
 
-  inline Expr convertToGEandGT(Expr term)
+  inline static Expr convertToGEandGT(Expr term)
   {
     if (isOpX<LT>(term)) return mk<GT>(term->right(), term->left());
 
@@ -1582,7 +1582,7 @@ namespace ufo
         //          outs () << "    [2e] ---> " << *transformed << "\n\n";
         return transformed;
       }
-      else if (isOpX<PLUS>(rhs))
+      if (isOpX<PLUS>(rhs))
       {
         bool found = false;
         Expr iteArg;
@@ -1623,7 +1623,7 @@ namespace ufo
           return transformed;
         }
       }
-      else if (isOpX<PLUS>(lhs))
+      if (isOpX<PLUS>(lhs))
       {
         // symmetric to the above case
         bool found = false;
@@ -1664,7 +1664,7 @@ namespace ufo
           return transformed;
         }
       }
-      else if (isOpX<STORE>(lhs))
+      if (isOpX<STORE>(lhs))
       {
         Expr arrVar = lhs->left();
         if (isOpX<ITE>(arrVar))
@@ -1673,6 +1673,39 @@ namespace ufo
                 mk<ITE>(arrVar->left(),
                        mk<STORE>(arrVar->right(), lhs->right(), lhs->last()),
                        mk<STORE>(arrVar->last(), lhs->right(), lhs->last())), rhs));
+        }
+      }
+      if (isOpX<STORE>(rhs))
+      {
+        Expr arrVar = rhs->left();
+        if (isOpX<ITE>(arrVar))
+        {
+          return unfoldITE (reBuildCmp(term,
+                 mk<ITE>(arrVar->left(),
+                         mk<STORE>(arrVar->right(), rhs->right(), rhs->last()),
+                         mk<STORE>(arrVar->last(), rhs->right(), rhs->last())), lhs));
+        }
+      }
+      if (isOpX<SELECT>(lhs))
+      {
+        Expr arrVar = lhs->left();
+        if (isOpX<ITE>(arrVar))
+        {
+          return unfoldITE (reBuildCmp(term,
+                 mk<ITE>(arrVar->left(),
+                         mk<SELECT>(arrVar->right(), lhs->right()),
+                         mk<SELECT>(arrVar->last(), lhs->right())), rhs));
+        }
+      }
+      if (isOpX<SELECT>(rhs))
+      {
+        Expr arrVar = rhs->left();
+        if (isOpX<ITE>(arrVar))
+        {
+          return unfoldITE (reBuildCmp(term,
+                 mk<ITE>(arrVar->left(),
+                         mk<SELECT>(arrVar->right(), rhs->right()),
+                         mk<SELECT>(arrVar->last(), rhs->right())), lhs));
         }
       }
     }
@@ -1765,6 +1798,24 @@ namespace ufo
         ExprSet neggedCnjs;
         for (auto & c : cnjs) neggedCnjs.insert(mkNeg(c));
         return disjoin(neggedCnjs, exp->getFactory());
+      }
+      return exp;
+    }
+  };
+
+  struct SelectStoreRewriter
+  {
+    SelectStoreRewriter () {};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<SELECT>(exp) && isOpX<STORE>(exp->left()))
+      {
+        if (exp->right() == exp->left()->right())
+          return exp->left()->last();
+        else
+          return mk<ITE>(mk<EQ>(exp->right(), exp->left()->right()),
+             exp->left()->last(), mk<SELECT>(exp->left()->left(), exp->right()));
       }
       return exp;
     }
@@ -1885,6 +1936,12 @@ namespace ufo
   inline static Expr rewriteNegAnd(Expr exp)
   {
     RW<NegAndRewriter> a(new NegAndRewriter());
+    return dagVisit (a, exp);
+  }
+
+  inline static Expr rewriteSelectStore(Expr exp)
+  {
+    RW<SelectStoreRewriter> a(new SelectStoreRewriter());
     return dagVisit (a, exp);
   }
 
