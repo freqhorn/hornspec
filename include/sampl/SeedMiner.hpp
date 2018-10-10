@@ -117,7 +117,9 @@ namespace ufo
         getConj(convertToGEandGT(dsj), arrCandsTmp);
         for (auto & a : arrCandsTmp)
         {
-          Expr normalized = normalizeDisj(a, invAndIterVars);
+          Expr tmpl = findNonlinAndRewrite(a, invAndIterVars, extraVars);
+          for (auto &b : extraVars) invAndIterVars.push_back(b.second);
+          Expr normalized = normalizeDisj(tmpl, invAndIterVars);
           ExprSet vrs;
           filter (normalized, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
           bool sanitized = true;

@@ -196,7 +196,12 @@ namespace ufo
     {
       // for now, if a CHC system has arrays, we try candidates only with array
       // in the future, we will need arithmetic candidates as well
-      if (hasArrays) return arrSimpl ? af.guessSimplTerm() : af.guessTerm();
+      if (hasArrays)
+      {
+        Expr cand = arrSimpl ? af.guessSimplTerm() : af.guessTerm();
+        for (auto & v : lf.nonlinVars) cand = replaceAll(cand, v.second, v.first);
+        return cand;
+      }
 
       int arity = chooseByWeight(orAritiesDensity);
       int hasBool = chooseByWeight(hasBooleanComb);
