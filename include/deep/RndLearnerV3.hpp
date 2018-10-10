@@ -280,6 +280,8 @@ namespace ufo
         map<Expr, ExprVector> tmp;
         ExprVector tmpVars;
         ExprVector arrVars;
+        Expr tmpIt = bind::intConst(mkTerm<string> ("_tmp_it", m_efac));
+
         for (auto & a : sf.learnedExprs)
         {
           if (!isOpX<FORALL>(a)) continue;
@@ -316,7 +318,43 @@ namespace ufo
 
           Expr postReplaced = learnedQF->right();
           for (int index = 0; index < se.size() && index < tmpVars.size(); index++)
-            postReplaced = replaceAll(postReplaced, se[index], tmpVars[index]);
+          postReplaced = replaceAll(postReplaced, se[index], tmpVars[index]);
+
+          ExprSet postVars;
+          filter(postReplaced, bind::IsConst(), inserter(postVars, postVars.begin()));
+          for (auto & fhVar : sf.lf.getVars()) postVars.erase(fhVar);
+          for (auto & tmpVar : tmpVars) postVars.erase(tmpVar);
+          if (postVars.size() > 0)
+          {
+            AeValSolver ae(mk<TRUE>(m_efac), mk<AND>(postReplaced, mk<EQ>(tmpIt, se[0]->right())), postVars);
+            if (ae.solve())
+            {
+              Expr pr = ae.getValidSubset();
+              ExprSet conjs;
+              getConj(pr, conjs);
+              if (conjs.size() > 1)
+              {
+                for (auto conjItr = conjs.begin(); conjItr != conjs.end();)
+                {
+                  ExprVector conjVars;
+                  filter (*conjItr, bind::IsConst(), inserter(conjVars, conjVars.begin()));
+                  bool found = false;
+                  for (auto & conjVar : conjVars)
+                  {
+                    if (find (tmpVars.begin(), tmpVars.end(), conjVar) != tmpVars.end())
+                    {
+                      found = true;
+                      break;
+                    }
+                  }
+                  if (!found) conjItr = conjs.erase(conjItr);
+                  else ++conjItr;
+                }
+              }
+              postReplaced = conjoin(conjs, m_efac);
+            }
+          }
+
           pres.push_back(learnedQF->left());
           posts.push_back(postReplaced);
           tmp[mk<AND>(learnedQF->left(), postReplaced)].push_back(se[0]->right());
@@ -329,7 +367,6 @@ namespace ufo
             if (a.second.size() > 1)
             {
               Expr disjIts = mk<FALSE>(m_efac);
-              Expr tmpIt = bind::intConst(mkTerm<string> ("_tmp_it", m_efac));
               for (auto & b : a.second) disjIts = mk<OR>(disjIts, mk<EQ>(tmpIt, b));
               ExprSet elementaryIts;
               filter (disjIts, bind::IsConst (), inserter(elementaryIts, elementaryIts.begin()));
@@ -344,9 +381,9 @@ namespace ufo
                   Expr it = *elementaryIts.begin();
                   args.push_back(it->left());
                   Expr newPre = replaceAll(ae.getValidSubset(), tmpIt, it);
-                  Expr newPost = a.first->right();
+                  Expr newPost = replaceAll(a.first->right(), tmpIt, it);
                   for (int index = 0; index < tmpVars.size() && index < arrVars.size(); index++)
-                    newPost = replaceAll(newPost, tmpVars[index], mk<SELECT>(arrVars[index], it));
+                  newPost = replaceAll(newPost, tmpVars[index], mk<SELECT>(arrVars[index], it));
                   args.push_back(mk<IMPL>(newPre, newPost));
                   Expr newCand = mknary<FORALL>(args);
                   sf.learnedExprs.insert(newCand);
