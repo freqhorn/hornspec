@@ -1006,16 +1006,19 @@ namespace ufo
     if (isOpX<MULT>(e))
     {
       int coef = 1;
+      ExprVector ops;
+      getMultOps (e, ops);
+
       Expr var = NULL;
-      for (auto it = e->args_begin (), end = e->args_end (); it != end; ++it)
+      for (auto & a : ops)
       {
-        if (isNumericConst(*it))
+        if (isNumericConst(a))
         {
-          coef *= lexical_cast<int>(*it);
+          coef *= lexical_cast<int>(a);
         }
-        else if (bind::isIntConst(*it) && var == NULL)
+        else if (bind::isIntConst(a) && var == NULL)
         {
-          var = *it;
+          var = a;
         }
         else
         {
@@ -1023,7 +1026,6 @@ namespace ufo
         }
       }
       if (success && coef != 0) return mk<MULT>(mkTerm (mpz_class (-coef), e->getFactory()), e->right());
-      
       if (coef == 0) return mkTerm (mpz_class (0), e->getFactory());
     }
     else if (isOpX<PLUS>(e))
@@ -1821,6 +1823,31 @@ namespace ufo
     }
   };
 
+  struct QuantifiedVarsFilter : public std::unary_function<Expr, VisitAction>
+  {
+    ExprSet& vars;
+
+    QuantifiedVarsFilter (ExprSet& _vars): vars(_vars) {};
+
+    VisitAction operator() (Expr exp)
+    {
+      if (isOp<FORALL>(exp))
+      {
+        for (int i = 0; i < exp->arity() - 1; i++)
+        {
+          vars.insert(bind::fapp(exp->arg(i)));
+        }
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
+  inline void getQuantifiedVars (Expr exp, ExprSet& vars)
+  {
+    QuantifiedVarsFilter qe (vars);
+    dagVisit (qe, exp);
+  }
+
   template<typename Range> static void update_min_value(ExprMap& m, Expr key, Expr value, Range& quantified, ExprSet& newCnjs)
   {
     // just heuristic
@@ -2099,18 +2126,16 @@ namespace ufo
       {
         all.push_back(arithmInverse(a));
       }
-      
       ExprSet newlhs;
-      
       for (auto &v : intVars)
       {
         int coef = 0;
+        string s1 = lexical_cast<string>(v);
         for (auto it = all.begin(); it != all.end();)
         {
-          string s1 = lexical_cast<string>(v);
           string s2 = lexical_cast<string>(*it);
-          
-          if(s1 == s2)
+
+          if (s1 == s2)
           {
             coef++;
             it = all.erase(it);
@@ -2130,22 +2155,32 @@ namespace ufo
           }
           else if (isOpX<MULT>(*it))
           {
-            string s3 = lexical_cast<string>((*it)->left());
-            string s4 = lexical_cast<string>((*it)->right());
-            
-            if (s1 == s3)
+            ExprVector ops;
+            getMultOps (*it, ops);
+
+            int c = 1;
+            bool success = true;
+            for (auto & a : ops)
             {
-              coef += lexical_cast<int>((*it)->right());
-              it = all.erase(it);
+              if (s1 == lexical_cast<string>(a))
+              {
+                // all good!
+              }
+              else if (isOpX<MPZ>(a))
+              {
+                c = c * lexical_cast<int>(a);
+              }
+              else
+              {
+                ++it;
+                success = false;
+                break;
+              }
             }
-            else if (s1 == s4)
+            if (success)
             {
-              coef += lexical_cast<int>((*it)->left());
+              coef += c;
               it = all.erase(it);
-            }
-            else
-            {
-              ++it;
             }
           }
           else
@@ -2297,49 +2332,6 @@ namespace ufo
         body = mk<AND>(replaceInSubexpr(body, s, s->right(), var_it), mk<EQ>(s->right(), var_it));
       }
     }
-  }
-
-  Expr getEvolvingIntVar(Expr exp, ExprSet& ssa)
-  {
-    Expr it;
-    ExprSet expVars;
-    ExprSet cands;
-    filter (exp, bind::IsConst (), inserter(expVars, expVars.begin()));
-    for (auto & a : ssa)
-    {
-      if (isOpX<EQ>(a) && !findArray(a))
-      {
-        ExprSet vars;
-        filter (a, bind::IsConst (), inserter(vars, vars.begin()));
-        if (vars.size() > 1)
-        {
-          // heuristic here. need to find a more stable solution
-          if (bind::isIntConst(a->right()) && !bind::isIntConst(a->left()))
-            filter (a->left(), bind::IsConst (), inserter(cands, cands.begin()));
-          else if (bind::isIntConst(a->left()) && !bind::isIntConst(a->right()))
-            filter (a->right(), bind::IsConst (), inserter(cands, cands.begin()));
-        }
-      }
-    }
-    if (isOpX<TRUE>(exp))
-    {
-      if (cands.size() > 1)
-        outs () << "WARNING: iterator choice needs attention!\n";
-      it = *cands.begin();
-    }
-    else
-    {
-      for (auto & e : cands)
-      {
-        if (find (expVars.begin(), expVars.end(), e) != expVars.end())
-        {
-          if (it != NULL)
-            outs () << "WARNING: iterator choice needs attention!\n";
-          it = e;
-        }
-      }
-    }
-    return it;
   }
 
   inline static bool isSymmetric (Expr exp)
@@ -2642,6 +2634,15 @@ namespace ufo
     if (isOpX<LT>(e1) && isOpX<LEQ>(e2) && e1->right() == e2->left())
       return mk<LT>(e1->left(), e2->right());
 
+    if (isOpX<LEQ>(e1) && isOpX<LEQ>(e2) && e2->right() == e1->left())
+      return mk<LEQ>(e2->left(), e1->right());
+    if (isOpX<LT>(e2) && isOpX<LT>(e1) && e2->right() == e1->left())
+      return mk<LT>(e2->left(), e1->right());
+    if (isOpX<LEQ>(e2) && isOpX<LT>(e1) && e2->right() == e1->left())
+      return mk<LT>(e2->left(), e1->right());
+    if (isOpX<LT>(e2) && isOpX<LEQ>(e1) && e2->right() == e1->left())
+      return mk<LT>(e2->left(), e1->right());
+
     if (isOpX<LEQ>(e1) && isOpX<GEQ>(e2) && e1->right() == e2->right())
       return mk<LEQ>(e1->left(), e2->left());
     if (isOpX<LT>(e1) && isOpX<GT>(e2) && e1->right() == e2->right())
@@ -2650,6 +2651,15 @@ namespace ufo
       return mk<LT>(e1->left(), e2->left());
     if (isOpX<LT>(e1) && isOpX<GEQ>(e2) && e1->right() == e2->right())
       return mk<LT>(e1->left(), e2->left());
+
+    if (isOpX<LEQ>(e1) && isOpX<GEQ>(e2) && e1->left() == e2->left())
+      return mk<LEQ>(e2->right(), e1->right());
+    if (isOpX<LT>(e1) && isOpX<GT>(e2) && e1->left() == e2->left())
+      return mk<LT>(e2->right(), e1->right());
+    if (isOpX<LEQ>(e1) && isOpX<GT>(e2) && e1->left() == e2->left())
+      return mk<LT>(e2->right(), e1->right());
+    if (isOpX<LT>(e1) && isOpX<GEQ>(e2) && e1->left() == e2->left())
+      return mk<LT>(e2->right(), e1->right());
 
     if (isOpX<GEQ>(e1) && isOpX<LEQ>(e2) && e1->right() == e2->right())
       return mk<GEQ>(e1->left(), e2->left());
@@ -2662,6 +2672,24 @@ namespace ufo
 
     // TODO: support more cases
     return NULL;
+  }
+
+  inline static Expr mergeIneqsWithVar (Expr e, Expr var)
+  {
+    ExprSet cnjs;
+    ExprVector cnjs2;
+    ExprSet cnjs3;
+    getConj(e, cnjs);
+    for (auto & a : cnjs)
+      if (contains(a, var)) cnjs2.push_back(a);
+      else cnjs3.insert(a);
+
+    if (cnjs2.size() != 2) return e;
+
+    assert(mergeIneqs(cnjs2[0], cnjs2[1]) != NULL);
+
+    cnjs3.insert(mergeIneqs(cnjs2[0], cnjs2[1]));
+    return conjoin(cnjs3, e->getFactory());
   }
 
   template <typename T> static void computeTransitiveClosure(ExprSet& r, ExprSet& tr)

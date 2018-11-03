@@ -120,6 +120,8 @@ namespace ufo
           Expr tmpl = findNonlinAndRewrite(a, invAndIterVars, extraVars);
           for (auto &b : extraVars) invAndIterVars.push_back(b.second);
           Expr normalized = normalizeDisj(tmpl, invAndIterVars);
+          if (!containsOp<SELECT>(normalized)) continue;
+
           ExprSet vrs;
           filter (normalized, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
           bool sanitized = true;

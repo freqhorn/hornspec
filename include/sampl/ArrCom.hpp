@@ -36,7 +36,6 @@ namespace ufo
     {
       set<int> arrConsts;
       set<int> arrCoefs;
-
       for (auto & a : cands)
       {
         if (getLinCombCoefs(a, arrCoefs))
@@ -68,16 +67,16 @@ namespace ufo
 
     void initialize(ExprVector& intVars, ExprSet& arrCands, ExprSet& arrSelects, ExprSet& arrRange)
     {
-      for (auto & a : arrSelects)
+      ExprSet it_vars;
+      for (auto & a : arrSelects) filter (a->right(), bind::IsConst(), std::inserter (it_vars, it_vars.begin ()));
+      for (auto & it : it_vars)
       {
-        postFac.addVar(a);
-        Expr it = a->right();
-        if (bind::isIntConst(it) &&
-            find(preFac.getVars().begin(), preFac.getVars().end(), it) == preFac.getVars().end())
+        if (bind::isIntConst(it))
         {
           postFac.addVar(it);
           preFac.addVar(it);
-          forall_args.push_back(it->left());
+          if (find(intVars.begin(), intVars.end(), it) == intVars.end())
+            forall_args.push_back(it->left());
         }
       }
 
