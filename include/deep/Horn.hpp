@@ -539,7 +539,7 @@ namespace ufo
 
       for (auto & c : cycles)
       {
-        wtoDecls.push_back(chcs[c[0]].srcRelation);
+        unique_push_back(chcs[c[0]].srcRelation, wtoDecls);
         for (int i = 1; i < c.size(); i++)
         {
           unique_push_back(chcs[c[i]].dstRelation, wtoDecls);

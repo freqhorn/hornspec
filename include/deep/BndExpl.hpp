@@ -32,7 +32,7 @@ namespace ufo
       m_efac(r.m_efac), ruleManager(r), u(m_efac) {}
 
     BndExpl (CHCs& r, Expr lms) :
-    m_efac(r.m_efac), ruleManager(r), u(m_efac), extraLemmas(lms) {}
+      m_efac(r.m_efac), ruleManager(r), u(m_efac), extraLemmas(lms) {}
 
     void guessRandomTrace(vector<int>& trace)
     {
@@ -81,19 +81,23 @@ namespace ufo
 
       Expr pref = toExpr(pr);
 
+      ExprSet quantified;
+      filter (pref, bind::IsConst(), inserter (quantified, quantified.begin ()));
+      for (auto & a : bindVars.back()) quantified.erase(a);
+
       if (!ruleManager.hasArrays && !findNonlin(pref) &&
           !containsOp<IDIV>(pref) && !containsOp<MOD>(pref)) // current limitations
       {
-        ExprSet quantified;
-        filter (pref, bind::IsConst(), inserter (quantified, quantified.begin ()));
-        for (auto & a : bindVars.back()) quantified.erase(a);
-
         if (quantified.size() > 0)
         {
           AeValSolver ae(mk<TRUE>(m_efac), pref, quantified);
           ae.solve();
           pref = ae.getValidSubset();
         }
+      }
+      else
+      {
+        pref = simpleQE(pref, quantified, true);
       }
 
       return replaceAll(pref, bindVars.back(), ruleManager.chcs[ruleManager.cycles[num][0]].srcVars);

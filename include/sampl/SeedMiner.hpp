@@ -82,11 +82,20 @@ namespace ufo
       }
     }
 
+    Expr rename(Expr cand)
+    {
+      for (int i = 0; i < hr.dstVars.size(); i++)
+      {
+        cand = replaceAll(cand, hr.dstVars[i], invVars[i]);
+      }
+      return cand;
+    }
+
     void addArrCand (Expr tmpl)
     {
       ExprSet dsjs;
       ExprSet newDsjs;
-      getDisj(tmpl, dsjs);
+      getDisj(rename(tmpl), dsjs);
 
       for (auto dsj : dsjs)
       {
@@ -105,11 +114,12 @@ namespace ufo
             // FIXME: should not fall here
             return;
           }
-          arrSelects.insert(a);
-          unique_push_back(a, invAndIterVars);
+          Expr cand = rename(a);
+          arrSelects.insert(cand);
+          unique_push_back(cand, invAndIterVars);
 
           ExprSet vrs;
-          filter (a, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
+          filter (cand, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
           for (auto & v : vrs) unique_push_back(v, invAndIterVars);
         }
 
@@ -137,7 +147,11 @@ namespace ufo
         }
       }
 
-      arrCands.insert(disjoin(newDsjs, m_efac));
+      if (newDsjs.size() > 0)
+      {
+        Expr cand = rename(disjoin(newDsjs, m_efac));
+        arrCands.insert(cand);
+      }
     }
 
     void addSeedHlp(Expr tmpl, ExprVector& vars, ExprSet& actualVars)

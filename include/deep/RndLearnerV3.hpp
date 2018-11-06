@@ -126,19 +126,28 @@ namespace ufo
       if (containsOp<FORALL>(candToProp))
       {
         // GF: not tested for backward propagation
-        newCand = finalizeArrCand(candToProp, relFrom);
-        newCand = eliminateQuantifiers(mk<AND>(newCand, constraint), varsRenameFrom, invNum);
-        Expr newCand1 = replaceArrRangeForIndCheck(invNum, newCand, constraint, true);
-        Expr newCand2 = replaceArrRangeForIndCheck(invNum, newCand, constraint, false);
-        candidates[invNum].push_back(newCand1);
-        bool res1 = checkCand(invNum);
-        ExprVector candsTmp = candidates[invNum];
-        candidates[invNum].push_back(newCand2);
-        bool res2 = checkCand(invNum);
-        if (candidates[invNum].empty()) candidates[invNum] = candsTmp;
-        // GF: temporary workaround:
-        // need to support Houdini for arrays, to be able to add newCand1 and newCand2 at the same time
-        return res1 || res2;
+        if (finalizeArrCand(candToProp, constraint, relFrom))
+        {
+          newCand = eliminateQuantifiers(mk<AND>(candToProp, constraint), varsRenameFrom, invNum);
+          Expr newCand1 = replaceArrRangeForIndCheck(invNum, newCand, constraint, true);
+          Expr newCand2 = replaceArrRangeForIndCheck(invNum, newCand, constraint, false);
+          candidates[invNum].push_back(newCand1);
+          bool res1 = checkCand(invNum);
+          ExprVector candsTmp = candidates[invNum];
+          candidates[invNum].push_back(newCand2);
+          bool res2 = checkCand(invNum);
+          if (candidates[invNum].empty()) candidates[invNum] = candsTmp;
+          // GF: temporary workaround:
+          // need to support Houdini for arrays, to be able to add newCand1 and newCand2 at the same time
+          return res1 || res2;
+        }
+        else
+        {
+          // very ugly at the moment, to be revisited
+          newCand = eliminateQuantifiers(mk<AND>(candToProp, constraint), varsRenameFrom, invNum);
+          candidates[invNum].push_back(newCand);
+          return checkCand(invNum);
+        }
       }
 
       ExprSet dsjs;
@@ -204,17 +213,19 @@ namespace ufo
       return true;
     }
 
-    Expr finalizeArrCand(Expr cand, Expr relFrom)
+    bool finalizeArrCand(Expr& cand, Expr constraint, Expr relFrom)
     {
       // only forward currently
-      if (!isOpX<FORALL>(cand)) return NULL;
-      if (!findArray(cand)) return NULL;
+      if (!isOpX<FORALL>(cand)) return false;
+      if (!findArray(cand)) return false;
 
+      // need to make sure the candidate is finalized (i.e., not a nested loop)
       int invNum = getVarIndex(relFrom, decls);
-      Expr candQFree = cand->last();
+      if (u.isSat(postconds[invNum], constraint)) return false;
 
-      Expr propped = mergeIneqsWithVar(mk<AND>(candQFree->left(), postconds[invNum]), iterators[invNum]);
-      return replaceAll(cand, cand->last()->left(), propped);
+      Expr propped = mergeIneqsWithVar(mk<AND>(cand->last()->left(), postconds[invNum]), iterators[invNum]);
+      cand = replaceAll(cand, cand->last()->left(), propped);
+      return true;
     }
 
     Expr replaceArrRangeForIndCheck(int invNum, Expr cand, Expr body, bool fwd = false)
@@ -228,13 +239,14 @@ namespace ufo
       // TODO: support the case when there are two or more quantified vars
 
       Expr it = bind::fapp(cand->arg(0));
-      Expr extr;
-      if      (iterGrows[invNum] && fwd)   extr = mk<GEQ>(it, itRepl);
-      else if (iterGrows[invNum] && !fwd)   extr = mk<LT>(it, itRepl);
-      else if (!iterGrows[invNum] && fwd)  extr = mk<LEQ>(it, itRepl);
-      else if (!iterGrows[invNum] && !fwd)  extr = mk<GT>(it, itRepl);
+      ExprSet extr;
+      if      (iterGrows[invNum] && fwd)   extr.insert(mk<GEQ>(it, itRepl));
+      else if (iterGrows[invNum] && !fwd)   extr.insert(mk<LT>(it, itRepl));
+      else if (!iterGrows[invNum] && fwd)  extr.insert(mk<LEQ>(it, itRepl));
+      else if (!iterGrows[invNum] && !fwd)  extr.insert(mk<GT>(it, itRepl));
 
-      return replaceAll(cand, cand->last()->left(), mk<AND>(cand->last()->left(), extr));
+      extr.insert(cand->last()->left());
+      return replaceAll(cand, cand->last()->left(), conjoin(extr, m_efac));
     }
 
     bool propagate(int invNum, Expr cand, bool seed)
@@ -635,6 +647,13 @@ namespace ufo
       else return multiHoudini(worklist);
     }
 
+    bool findInvVar(int invNum, Expr var)
+    {
+      for (auto & v : invarVars[invNum])
+        if (v.second == var) return true;
+      return false;
+    }
+
     // adapted from doSeedMining
     void getSeeds(Expr invRel, map<Expr, ExprSet>& cands, bool analizeCode = true)
     {
@@ -700,6 +719,10 @@ namespace ufo
 
         assert (isOpX<EQ>(preconds[ind])); // TODO: support more
 
+        ExprVector invAndIterVarsAll;
+        for (auto & a : invarVars[ind]) invAndIterVarsAll.push_back(a.second);
+        invAndIterVarsAll.push_back(qVar);
+
         Expr fla;
         if (preconds[ind]->right() == iterators[ind])
           fla = (iterGrows[ind]) ? mk<GEQ>(qVar, preconds[ind]->left()) :
@@ -708,10 +731,10 @@ namespace ufo
           fla = (iterGrows[ind]) ? mk<GEQ>(qVar, preconds[ind]->right()) :
                                    mk<LEQ>(qVar, preconds[ind]->right());
 
-        arrIterRanges[ind].insert(fla);
-        arrIterRanges[ind].insert(replaceAll(postconds[ind], iterators[ind], qVar));
+        arrIterRanges[ind].insert(normalizeDisj(fla, invAndIterVarsAll));
+        arrIterRanges[ind].insert(normalizeDisj(
+                replaceAll(postconds[ind], iterators[ind], qVar), invAndIterVarsAll));
       }
-
 
       for (auto & a : tmpArrSelects)
       {
@@ -733,8 +756,19 @@ namespace ufo
           for (auto & v : sf.lf.nonlinVars)
             replCand = replaceAll(replCand, v.second, v.first);
         if (!u.isEquiv(replCand, mk<TRUE>(m_efac)) && !u.isEquiv(replCand, mk<FALSE>(m_efac)))
-          for (auto iter : tmpArrAccessVars)
-            arrCands[ind].insert(replaceAll(replCand, iterators[ind], iter));
+        {
+          if (contains(replCand, iterators[ind]) || !emptyIntersect(replCand, tmpArrAccessVars))
+          {
+            for (auto iter : tmpArrAccessVars)
+            {
+              arrCands[ind].insert(replaceAll(replCand, iterators[ind], iter));
+            }
+          }
+          else
+          {
+            candsFromCode.insert(a);
+          }
+        }
       }
 
       for (auto & cand : candsFromCode)
@@ -744,7 +778,19 @@ namespace ufo
         for (int i = 0; i < 3; i++)
           for (auto & v : sf.lf.nonlinVars)
             replCand = replaceAll(replCand, v.second, v.first);
-        if (addCandidate(ind, replCand))
+
+        // sanity check for replCand:
+        ExprSet vars;
+        filter (replCand, bind::IsConst (), inserter(vars, vars.begin()));
+        bool toCont = true;
+        for (auto & v : vars)
+          if (!findInvVar(ind, v))
+          {
+            toCont = false;
+            break;
+          }
+
+        if (toCont && addCandidate(ind, replCand))
           propagate (ind, replCand, true);
       }
     }
@@ -798,6 +844,7 @@ namespace ufo
     {
       filterUnsat();
 
+      auto candidatesTmp = candidates;
       if (multiHoudini(ruleManager.wtoCHCs))
       {
         assignPrioritiesForLearned();
@@ -812,8 +859,9 @@ namespace ufo
       // TODO: batching
       if (ruleManager.hasArrays)
       {
-        for (int i = 0; i < invNumber; i++)
+        for (auto & dcl: ruleManager.wtoDecls)
         {
+          int i = getVarIndex(dcl, decls);
           SamplFactory& sf = sfs[i].back();
           for (auto & c : arrCands[i])
           {
@@ -835,6 +883,19 @@ namespace ufo
           }
         }
       }
+
+      // second round of bootstrapping (to be removed after Houdini supports arrays)
+      candidates = candidatesTmp;
+      if (multiHoudini(ruleManager.wtoCHCs))
+      {
+        assignPrioritiesForLearned();
+        if (checkAllLemmas())
+        {
+          outs () << "Success after bootstrapping\n";
+          return true;
+        }
+      }
+
       return false;
     }
 
@@ -919,12 +980,6 @@ namespace ufo
       int invNum = getVarIndex(ruleManager.chcs[cycle[0]].srcRelation, decls);
       if (iterators[invNum] != NULL) return;    // GF: TODO more sanity checks (if needed)
 
-      if (cycle.size() != 1)
-      {
-        for (int i = 0; i < cycle.size(); i++) outs () << " " << cycle[i] << ",";
-        outs () << "Small-step encoding is not supported currently\n";
-        exit(0);     // TODO: support longer cycles
-      }
       ExprSet ssa;
       ssas[invNum] = bnd.toExpr(cycle);
       getConj(ssas[invNum], ssa);
