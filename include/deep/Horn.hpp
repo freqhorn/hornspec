@@ -448,6 +448,16 @@ namespace ufo
       }
     }
 
+    HornRuleExt* getNestedRel (Expr rel)
+    {
+      vector<int> cycle;
+      getCycleForRel(rel, cycle);
+      if (cycle.size() > 0 && !chcs[cycle[0]].isInductive)
+        return &chcs[cycle[0]];
+      else
+        return NULL;
+    }
+
     HornRuleExt* getFirstRuleOutside (Expr rel)
     {
       for (auto & c : cycles)

@@ -34,7 +34,7 @@ namespace ufo
 
     // for arrays
     vector<ExprSet> arrCands;
-    vector<ExprSet> arrSelects;
+    vector<ExprSet> arrAccessVars;
     vector<ExprSet> arrIterRanges;
 
     int invNumber;
@@ -464,7 +464,7 @@ namespace ufo
       }
 
       arrCands.push_back(ExprSet());
-      arrSelects.push_back(ExprSet());
+      arrAccessVars.push_back(ExprSet());
       arrIterRanges.push_back(ExprSet());
 
       invNumber++;
@@ -546,7 +546,7 @@ namespace ufo
         sf.lf.addConst(min);
       }
 
-      sf.initialize(arrCands[ind], arrSelects[ind], arrIterRanges[ind]);
+      sf.initialize(arrCands[ind], arrAccessVars[ind], arrIterRanges[ind]);
 
       ExprSet allCands;
       for (auto &cs : css)

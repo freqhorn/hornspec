@@ -647,11 +647,72 @@ namespace ufo
       else return multiHoudini(worklist);
     }
 
-    bool findInvVar(int invNum, Expr var)
+    bool findInvVar(int invNum, Expr expr, ExprVector& ve)
     {
-      for (auto & v : invarVars[invNum])
-        if (v.second == var) return true;
-      return false;
+      ExprSet vars;
+      filter (expr, bind::IsConst (), inserter(vars, vars.begin()));
+
+      for (auto & v : vars)
+      {
+        bool found = false;
+        for (auto & w : invarVars[invNum])
+        {
+          if (w.second == v)
+          {
+            found = true;
+            break;
+          }
+        }
+        if (!found)
+        {
+          if (find (ve.begin(), ve.end(), v) == ve.end())
+            return false;
+        }
+      }
+      return true;
+    }
+
+    bool toCont(int invNum, Expr expr, ExprVector& ve)
+    {
+      ExprSet vars;
+      filter (expr, bind::IsConst (), inserter(vars, vars.begin()));
+      bool toCont = true;
+      for (auto & expr : vars)
+      {
+        if (!findInvVar(invNum, expr, ve))
+        {
+          toCont = false;
+          break;
+        }
+      }
+      return toCont;
+    }
+
+    // heuristic to replace weird variables in candidates
+    bool prepareArrCand (Expr& replCand, ExprMap& replLog, ExprVector& tmpArrAccessVars, int ind, int i = 0)
+    {
+      if (tmpArrAccessVars.empty()) return false;
+
+      ExprSet se;
+      filter (replCand, bind::IsSelect (), inserter(se, se.begin()));
+
+      for (auto & a : se)
+      {
+        if (isOpX<MPZ>(a->right())  || (!findInvVar(ind, a->right(), tmpArrAccessVars)))
+        {
+          if (isOpX<MPZ>(a->right()))
+          {
+            arrIterRanges[ind].insert(mk<EQ>(tmpArrAccessVars[i], a->right()));
+          }
+          // TODO:  try other combinations of replacements
+          if (i >= tmpArrAccessVars.size()) return false;
+          replLog[a->right()] = tmpArrAccessVars[i];
+          replCand = replaceAll(replCand, a->right(), replLog[a->right()]);
+
+          return prepareArrCand (replCand, replLog, tmpArrAccessVars, ind, i + 1);
+        }
+      }
+      return true;
     }
 
     // adapted from doSeedMining
@@ -667,7 +728,7 @@ namespace ufo
       ExprSet tmpArrAccess;
       ExprSet tmpArrSelects;
       ExprSet tmpArrCands;
-      ExprSet tmpArrAccessVars;
+      ExprVector tmpArrAccessVars;
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
@@ -688,89 +749,118 @@ namespace ufo
         {
           tmpArrCands.insert(sm.arrCands.begin(), sm.arrCands.end());
           tmpArrSelects.insert(sm.arrSelects.begin(), sm.arrSelects.end());
-          tmpArrAccessVars.insert(sm.arrAccessVars.begin(), sm.arrAccessVars.end());
-          arrIterRanges[ind].insert(sm.arrIterRanges.begin(), sm.arrIterRanges.end());
+        }
+      }
 
-          // extra range constraints
-          if (sm.arrAccessVars.size() > 0)
+      if (ruleManager.hasArrays)
+      {
+        if (tmpArrAccessVars.empty() && preconds[ind] != NULL)
+        {
+          Expr qVar = bind::intConst(mkTerm<string> ("_FH_arr_it", m_efac));
+          tmpArrAccessVars.push_back(qVar);
+
+          assert (isOpX<EQ>(preconds[ind])); // TODO: support more
+
+          ExprVector invAndIterVarsAll;
+          for (auto & a : invarVars[ind]) invAndIterVarsAll.push_back(a.second);
+          invAndIterVarsAll.push_back(qVar);
+
+          Expr fla;
+          if (preconds[ind]->right() == iterators[ind])
+            fla = (iterGrows[ind]) ? mk<GEQ>(qVar, preconds[ind]->left()) :
+                                     mk<LEQ>(qVar, preconds[ind]->left());
+          else if (preconds[ind]->left() == iterators[ind])
+            fla = (iterGrows[ind]) ? mk<GEQ>(qVar, preconds[ind]->right()) :
+                                     mk<LEQ>(qVar, preconds[ind]->right());
+
+          arrIterRanges[ind].insert(normalizeDisj(fla, invAndIterVarsAll));
+          arrIterRanges[ind].insert(normalizeDisj(
+                  replaceAll(postconds[ind], iterators[ind], qVar), invAndIterVarsAll));
+        }
+
+        auto nested = ruleManager.getNestedRel(invRel);
+        if (nested != NULL)
+        {
+          int invNumTo = getVarIndex(nested->dstRelation, decls);
+          // only one variable for now. TBD: find if we need more
+          Expr qVar2 = bind::intConst(mkTerm<string> ("_FH_nst_it", m_efac));
+          tmpArrAccessVars.push_back(qVar2);
+
+          Expr range = conjoin (arrIterRanges[invNumTo], m_efac);
+          ExprSet quantified;
+          for (int i = 0; i < nested->dstVars.size(); i++)
           {
-            sm.candidates.clear();
-            sm.analizeExtras(postconds[ind]);
-            for (auto cand : sm.candidates)
+            range = replaceAll(range, invarVars[invNumTo][i], nested->dstVars[i]);
+            quantified.insert(nested->dstVars[i]);
+          }
+
+          // naive propagation of ranges
+          ExprSet cnjs;
+          getConj(nested->body, cnjs);
+          for (auto & a : cnjs)
+          {
+            for (auto & b : quantified)
             {
-              for (auto & iter : tmpArrAccessVars)
+              if (isOpX<EQ>(a) && a->right() == b)
               {
-                cand = replaceAll(cand, iterators[ind], iter);
-                if (!u.implies(conjoin(arrIterRanges[ind], m_efac), cand))
-                {
-                  arrIterRanges[ind].insert(cand);
-                }
+                range = replaceAll(range, b, a->left());
+              }
+              else if (isOpX<EQ>(a) && a->left() == b)
+              {
+                range = replaceAll(range, b, a->right());
               }
             }
           }
+          arrIterRanges[ind].insert(
+                replaceAll(replaceAll(range, *arrAccessVars[invNumTo].begin(), qVar2),
+                      iterators[ind], tmpArrAccessVars[0]));
         }
-      }
 
-      if (tmpArrAccessVars.empty())
-      {
-        // only one variable for now. TBD: find if we need more
-        Expr qVar = bind::intConst(mkTerm<string> ("_FH_arr_it", m_efac));
-        tmpArrAccessVars.insert(qVar);
+        arrAccessVars[ind].insert(tmpArrAccessVars.begin(), tmpArrAccessVars.end());
 
-        assert (isOpX<EQ>(preconds[ind])); // TODO: support more
-
-        ExprVector invAndIterVarsAll;
-        for (auto & a : invarVars[ind]) invAndIterVarsAll.push_back(a.second);
-        invAndIterVarsAll.push_back(qVar);
-
-        Expr fla;
-        if (preconds[ind]->right() == iterators[ind])
-          fla = (iterGrows[ind]) ? mk<GEQ>(qVar, preconds[ind]->left()) :
-                                   mk<LEQ>(qVar, preconds[ind]->left());
-        else if (preconds[ind]->left() == iterators[ind])
-          fla = (iterGrows[ind]) ? mk<GEQ>(qVar, preconds[ind]->right()) :
-                                   mk<LEQ>(qVar, preconds[ind]->right());
-
-        arrIterRanges[ind].insert(normalizeDisj(fla, invAndIterVarsAll));
-        arrIterRanges[ind].insert(normalizeDisj(
-                replaceAll(postconds[ind], iterators[ind], qVar), invAndIterVarsAll));
-      }
-
-      for (auto & a : tmpArrSelects)
-      {
-        for (auto iter : tmpArrAccessVars)
+        // process all quantified seeds
+        for (auto & a : tmpArrCands)
         {
-          // GF is it needed here?
-          Expr replCand = replaceAll(a, iterators[ind], iter);
+          Expr replCand = a;
           for (int i = 0; i < 3; i++)
             for (auto & v : sf.lf.nonlinVars)
               replCand = replaceAll(replCand, v.second, v.first);
-          arrSelects[ind].insert(replCand);
-        }
-      }
-
-      for (auto & a : tmpArrCands)
-      {
-        Expr replCand = a;
-        for (int i = 0; i < 3; i++)
-          for (auto & v : sf.lf.nonlinVars)
-            replCand = replaceAll(replCand, v.second, v.first);
-        if (!u.isEquiv(replCand, mk<TRUE>(m_efac)) && !u.isEquiv(replCand, mk<FALSE>(m_efac)))
-        {
-          if (contains(replCand, iterators[ind]) || !emptyIntersect(replCand, tmpArrAccessVars))
+          if (!u.isEquiv(replCand, mk<TRUE>(m_efac)) && !u.isEquiv(replCand, mk<FALSE>(m_efac)))
           {
-            for (auto iter : tmpArrAccessVars)
-            {
-              arrCands[ind].insert(replaceAll(replCand, iterators[ind], iter));
+            ExprMap replLog;
+
+            if ( prepareArrCand (replCand, replLog, tmpArrAccessVars, ind) &&
+                (contains(replCand, iterators[ind]) || !emptyIntersect(replCand, tmpArrAccessVars)))
+              for (auto iter : tmpArrAccessVars)
+                arrCands[ind].insert(replaceAll(replCand, iterators[ind], iter));
+            else candsFromCode.insert(a);
+          }
+        }
+
+        // trick for tiling benchs
+        ExprSet sels;
+        for (auto & sel : tmpArrSelects)
+        {
+          if (!toCont(ind, sel, tmpArrAccessVars)) continue;
+          for (auto iter : tmpArrAccessVars)
+            sels.insert(replaceAll(sel, iterators[ind], iter));
+        }
+
+        for (auto & qcand : arrCands[ind])
+        {
+          ExprSet se;
+          filter (qcand, bind::IsSelect (), inserter(se, se.begin()));
+          for (auto & s : se) {
+            for (auto & arrsel : sels) {
+              if (se.find(arrsel) != se.end()) continue;
+              Expr  qcandTmp = replaceAll(qcand, s, arrsel);
+              arrCands[ind].insert(qcandTmp);
             }
           }
-          else
-          {
-            candsFromCode.insert(a);
-          }
         }
       }
 
+      // process all quantifier-free seeds
       for (auto & cand : candsFromCode)
       {
         checked.clear();
@@ -780,17 +870,7 @@ namespace ufo
             replCand = replaceAll(replCand, v.second, v.first);
 
         // sanity check for replCand:
-        ExprSet vars;
-        filter (replCand, bind::IsConst (), inserter(vars, vars.begin()));
-        bool toCont = true;
-        for (auto & v : vars)
-          if (!findInvVar(ind, v))
-          {
-            toCont = false;
-            break;
-          }
-
-        if (toCont && addCandidate(ind, replCand))
+        if (toCont (ind, replCand, tmpArrAccessVars) && addCandidate(ind, replCand))
           propagate (ind, replCand, true);
       }
     }

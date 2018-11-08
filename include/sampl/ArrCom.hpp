@@ -65,11 +65,9 @@ namespace ufo
       for (auto & ar : orArities) lf.stabilizeDensities(ar, eps, 1);
     }
 
-    void initialize(ExprVector& intVars, ExprSet& arrCands, ExprSet& arrSelects, ExprSet& arrRange)
+    void initialize(ExprVector& intVars, ExprSet& arrCands, ExprSet& arrAccessVars, ExprSet& arrRange)
     {
-      ExprSet it_vars;
-      for (auto & a : arrSelects) filter (a->right(), bind::IsConst(), std::inserter (it_vars, it_vars.begin ()));
-      for (auto & it : it_vars)
+      for (auto & it : arrAccessVars)
       {
         if (bind::isIntConst(it))
         {

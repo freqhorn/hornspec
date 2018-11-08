@@ -1316,8 +1316,9 @@ namespace ufo
   // ab \/ cde \/ f =>
   //                    (a \/ c \/ f) /\ (a \/ d \/ f) /\ (a \/ e \/ f) /\
   //                    (b \/ c \/ f) /\ (b \/ d \/ f) /\ (b \/ e \/ f)
-  inline static Expr rewriteOrAnd(Expr exp)
+  inline static Expr rewriteOrAnd(Expr exp, bool approx = false)
   {
+    int maxConjs = 0;
     ExprSet disjs;
     getDisj(exp, disjs);
     if (disjs.size() == 1)
@@ -1329,11 +1330,26 @@ namespace ufo
       ExprSet conjs;
       getConj(a, conjs);
       dconjs.push_back(conjs);
+      if (maxConjs < conjs.size()) maxConjs = conjs.size();
     }
-    
+
+    if (disjs.size() > 3 && maxConjs > 3)
+    {
+      approx = true;
+    }
+
+    if (approx)
+    {
+      ExprSet newDisjs;
+      for (auto &d : dconjs)
+        for (auto &c : d)
+          newDisjs.insert(c);
+      return disjoin(newDisjs, exp->getFactory());
+    }
+
     ExprSet older;
     productAnd(dconjs[0], dconjs[1], older);
-    
+
     ExprSet newer = older;
     for (int i = 2; i < disjs.size(); i++)
     {
@@ -1521,6 +1537,42 @@ namespace ufo
     return term;
   }
 
+  /* find expressions of type expr = arrayVar in e and store it in output */
+  inline static void getArrayEqualExprs(Expr e, Expr arrayVar, ExprVector & output)
+  {
+    if (e->arity() == 1) {
+      return;
+
+    } else if (e->arity() == 2) {
+      Expr lhs = e->left();
+      Expr rhs = e->right();
+      if (lhs == arrayVar) {
+        output.push_back(rhs);
+        return;
+
+      } else if (rhs == arrayVar) {
+        output.push_back(lhs);
+        return;
+      }
+    }
+
+    for (int i = 0; i < e->arity(); i++) {
+      getArrayEqualExprs(e->arg(i), arrayVar, output);
+    }
+  }
+
+  /* find all expressions in e of type expr = arrayVar */
+  /* and replace it by STORE(expr, itr, val) = arrayVar*/
+  inline static Expr propagateStore(Expr e, Expr itr, Expr val, Expr arrayVar)
+  {
+    Expr retExpr = e;
+    ExprVector exprvec;
+    getArrayEqualExprs(e, arrayVar, exprvec);
+    for (auto & ev : exprvec)
+      retExpr = replaceAll(retExpr, ev, mk<STORE>(ev, itr, val));
+    return retExpr;
+  }
+
   inline static Expr unfoldITE(Expr term)
   {
     if (isOpX<ITE>(term))
@@ -1671,10 +1723,16 @@ namespace ufo
         Expr arrVar = lhs->left();
         if (isOpX<ITE>(arrVar))
         {
-          return unfoldITE (reBuildCmp(term,
-                mk<ITE>(arrVar->left(),
-                       mk<STORE>(arrVar->right(), lhs->right(), lhs->last()),
-                       mk<STORE>(arrVar->last(), lhs->right(), lhs->last())), rhs));
+          Expr ifExpr =  unfoldITE(reBuildCmp(term, arrVar->right(), rhs));
+          Expr elseExpr = unfoldITE(reBuildCmp(term, arrVar->last(), rhs));
+
+          ifExpr = propagateStore(ifExpr, lhs->right(), lhs->last(), rhs);
+          elseExpr = propagateStore(elseExpr, lhs->right(), lhs->last(), rhs);
+
+          Expr condExpr = unfoldITE (arrVar->left());
+          Expr retExpr = mk<OR> (mk<AND>(condExpr, ifExpr), mk<AND>(mkNeg(condExpr), elseExpr));
+
+          return retExpr;
         }
       }
       if (isOpX<STORE>(rhs))
@@ -1682,21 +1740,16 @@ namespace ufo
         Expr arrVar = rhs->left();
         if (isOpX<ITE>(arrVar))
         {
-          return unfoldITE (reBuildCmp(term,
-                 mk<ITE>(arrVar->left(),
-                         mk<STORE>(arrVar->right(), rhs->right(), rhs->last()),
-                         mk<STORE>(arrVar->last(), rhs->right(), rhs->last())), lhs));
-        }
-      }
-      if (isOpX<SELECT>(lhs))
-      {
-        Expr arrVar = lhs->left();
-        if (isOpX<ITE>(arrVar))
-        {
-          return unfoldITE (reBuildCmp(term,
-                 mk<ITE>(arrVar->left(),
-                         mk<SELECT>(arrVar->right(), lhs->right()),
-                         mk<SELECT>(arrVar->last(), lhs->right())), rhs));
+          Expr ifExpr = unfoldITE (reBuildCmp(term, arrVar->right(), lhs));
+          Expr elseExpr = unfoldITE (reBuildCmp(term, arrVar->last(), lhs));
+
+          ifExpr = propagateStore(ifExpr, rhs->right(), rhs->last(), lhs);
+          elseExpr = propagateStore(elseExpr, rhs->right(), rhs->last(), lhs);
+
+          Expr condExpr = unfoldITE (arrVar->left());
+          Expr retExpr = mk<OR> (mk<AND>(condExpr, ifExpr), mk<AND>(mkNeg(condExpr), elseExpr));
+
+          return retExpr;
         }
       }
       if (isOpX<SELECT>(rhs))
@@ -2460,10 +2513,37 @@ namespace ufo
           processNestedStores(exp->right(), tmp);
           return conjoin(tmp, exp->getFactory());
         }
+
         ExprVector av;
         filter (exp, bind::IsConst (), inserter(av, av.begin()));
         if (!emptyIntersect(av, srcVars) && !emptyIntersect(av, dstVars))
           return mk<TRUE>(exp->getFactory());
+      }
+      else if (isOpX<OR>(exp))
+      {
+        ExprSet newDsjs;
+        for (unsigned i = 0; i < exp->arity (); i++)
+        {
+          ExprSet cnjs;
+          getConj(exp->arg(i), cnjs);
+          map<Expr, bool> sels;
+          bool allselects = true;
+          bool noselects = true;
+          for (auto & a : cnjs)
+          {
+            sels[a] = containsOp<SELECT>(a);
+            if (sels[a]) noselects = false;
+            else allselects = false;
+          }
+          if (!noselects && ! allselects)
+          {
+            ExprSet newCnjs;
+            for (auto & a : cnjs)
+              if (sels[a]) newCnjs.insert(a);
+            newDsjs.insert(conjoin(newCnjs,exp->getFactory()));
+          }
+        }
+        return disjoin(newDsjs,exp->getFactory());
       }
       return exp;
     }
@@ -2624,6 +2704,8 @@ namespace ufo
       return mk<GT>(e1->left(), e2->right());
     if (isOpX<GT>(e1) && isOpX<GEQ>(e2) && e1->right() == e2->left())
       return mk<GT>(e1->left(), e2->right());
+    if (isOpX<GT>(e1) && isOpX<GEQ>(e2) && (e1->left() == e2->right()))
+      return mk<GT>(e2->left(), e1->right());
 
     if (isOpX<LEQ>(e1) && isOpX<LEQ>(e2) && e1->right() == e2->left())
       return mk<LEQ>(e1->left(), e2->right());
