@@ -78,12 +78,7 @@ namespace ufo
         }
       }
 
-      pre = mk<TRUE>(m_efac);
-      for (auto & a : arrRange)
-      {
-        if (!emptyIntersect(a, preFac.getVars()))
-          pre = mk<AND>(pre, a);
-      }
+      pre = conjoin(arrRange, m_efac);
 
       initializeLAfactory(preFac, arrRange, intVars, 1);
       initializeLAfactory(postFac, arrCands, intVars, 0);

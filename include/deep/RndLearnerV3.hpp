@@ -115,7 +115,7 @@ namespace ufo
       return mk<TRUE>(m_efac);
     }
 
-    bool getCandForAdjacentRel(Expr candToProp, Expr constraint, Expr relFrom, ExprVector& varsRenameFrom, Expr rel, bool seed)
+    bool getCandForAdjacentRel(Expr candToProp, Expr constraint, Expr relFrom, ExprVector& varsRenameFrom, Expr rel, bool seed, bool fwd)
     {
       Expr formula = mk<AND>(candToProp, constraint);
       if (!containsOp<FORALL>(candToProp) && !u.isSat(formula)) return false; // sometimes, maybe we should return true.
@@ -126,20 +126,20 @@ namespace ufo
       if (containsOp<FORALL>(candToProp))
       {
         // GF: not tested for backward propagation
+        if (fwd == false) return true;
         if (finalizeArrCand(candToProp, constraint, relFrom))
         {
           newCand = eliminateQuantifiers(mk<AND>(candToProp, constraint), varsRenameFrom, invNum);
-          Expr newCand1 = replaceArrRangeForIndCheck(invNum, newCand, constraint, true);
-          Expr newCand2 = replaceArrRangeForIndCheck(invNum, newCand, constraint, false);
-          candidates[invNum].push_back(newCand1);
-          bool res1 = checkCand(invNum);
-          ExprVector candsTmp = candidates[invNum];
-          candidates[invNum].push_back(newCand2);
-          bool res2 = checkCand(invNum);
-          if (candidates[invNum].empty()) candidates[invNum] = candsTmp;
           // GF: temporary workaround:
-          // need to support Houdini for arrays, to be able to add newCand1 and newCand2 at the same time
-          return res1 || res2;
+          // need to support Houdini for arrays, to be able to add newCand and newCand1 at the same time
+          Expr newCand1 = replaceArrRangeForIndCheck(invNum, newCand, true);
+          auto candsTmp = candidates;
+          candidates[invNum].push_back(newCand);
+          bool res0 = checkCand(invNum);
+          if (!candidates[invNum].empty()) return res0;
+          candidates = candsTmp;
+          candidates[invNum].push_back(newCand1);
+          return checkCand(invNum);
         }
         else
         {
@@ -198,7 +198,7 @@ namespace ufo
           ExprSet cnjs;
           ExprSet newCnjs;
           Expr it = iterators[invNum];
-          if (it != NULL) cnd = replaceArrRangeForIndCheck (invNum, cnd, hr->body);
+          if (it != NULL) cnd = replaceArrRangeForIndCheck (invNum, cnd);
         }
         candidates[invNum].push_back(cnd);
         return true;
@@ -223,12 +223,11 @@ namespace ufo
       int invNum = getVarIndex(relFrom, decls);
       if (u.isSat(postconds[invNum], constraint)) return false;
 
-      Expr propped = mergeIneqsWithVar(mk<AND>(cand->last()->left(), postconds[invNum]), iterators[invNum]);
-      cand = replaceAll(cand, cand->last()->left(), propped);
+      cand = replaceAll(cand, cand->last()->left(), conjoin(arrIterRanges[invNum], m_efac));
       return true;
     }
 
-    Expr replaceArrRangeForIndCheck(int invNum, Expr cand, Expr body, bool fwd = false)
+    Expr replaceArrRangeForIndCheck(int invNum, Expr cand, bool fwd = false)
     {
       Expr itRepl = iterators[invNum];
       Expr post = postconds[invNum];
@@ -282,7 +281,7 @@ namespace ufo
           Expr replCand = cand;
           for (int i = 0; i < 3; i++) for (auto & v : sf1->lf.nonlinVars) replCand = replaceAll(replCand, v.second, v.first);
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.srcVars[v.first]);
-          res = res && getCandForAdjacentRel (replCand, constraint, rel, hr.dstVars, hr.dstRelation, seed);
+          res = res && getCandForAdjacentRel (replCand, constraint, rel, hr.dstVars, hr.dstRelation, seed, true);
         }
 
         // backward (very similarly):
@@ -291,7 +290,7 @@ namespace ufo
           Expr replCand = cand;
           for (int i = 0; i < 3; i++) for (auto & v : sf2->lf.nonlinVars) replCand = replaceAll(replCand, v.second, v.first);
           for (auto & v : invarVars[invNum]) replCand = replaceAll(replCand, v.second, hr.dstVars[v.first]);
-          res = res && getCandForAdjacentRel (replCand, constraint, rel, hr.srcVars, hr.srcRelation, seed);
+          res = res && getCandForAdjacentRel (replCand, constraint, rel, hr.srcVars, hr.srcRelation, seed, false);
         }
       }
       return res;
@@ -688,28 +687,48 @@ namespace ufo
       return toCont;
     }
 
-    // heuristic to replace weird variables in candidates
-    bool prepareArrCand (Expr& replCand, ExprMap& replLog, ExprVector& tmpArrAccessVars, int ind, int i = 0)
+    // heuristic to instantiate a quantified candidate for some particular instances
+    void createGroundInstances (ExprSet& vals, ExprSet& res, Expr qcand, Expr iterVar)
     {
-      if (tmpArrAccessVars.empty()) return false;
+      ExprSet se;
+      filter (qcand, bind::IsSelect (), inserter(se, se.begin()));
+
+      for (auto & a : se)
+      {
+        if (iterVar == a->right())
+        {
+          for (auto & v : vals)
+          {
+            res.insert(replaceAll(qcand, iterVar, v));
+          }
+        }
+      }
+    }
+
+    // heuristic to replace weird variables in candidates
+    bool prepareArrCand (Expr& replCand, ExprMap& replLog, ExprVector& av,
+                         ExprSet& tmpRanges, ExprSet& concreteVals, int ind, int i = 0)
+    {
+      if (av.empty()) return false;
 
       ExprSet se;
       filter (replCand, bind::IsSelect (), inserter(se, se.begin()));
 
       for (auto & a : se)
       {
-        if (isOpX<MPZ>(a->right())  || (!findInvVar(ind, a->right(), tmpArrAccessVars)))
+        if (isOpX<MPZ>(a->right())  || (!findInvVar(ind, a->right(), av)))
         {
           if (isOpX<MPZ>(a->right()))
           {
-            arrIterRanges[ind].insert(mk<EQ>(tmpArrAccessVars[i], a->right()));
+            tmpRanges.insert(mk<EQ>(av[i], a->right()));
+            concreteVals.insert(a->right());
           }
           // TODO:  try other combinations of replacements
-          if (i >= tmpArrAccessVars.size()) return false;
-          replLog[a->right()] = tmpArrAccessVars[i];
+          if (i >= av.size()) return false;
+          replLog[a->right()] = av[i];
           replCand = replaceAll(replCand, a->right(), replLog[a->right()]);
 
-          return prepareArrCand (replCand, replLog, tmpArrAccessVars, ind, i + 1);
+          return prepareArrCand (replCand, replLog, av, tmpRanges, concreteVals, ind, i + 1);
         }
       }
       return true;
@@ -754,7 +773,7 @@ namespace ufo
 
       if (ruleManager.hasArrays)
       {
-        if (tmpArrAccessVars.empty() && preconds[ind] != NULL)
+        if (preconds[ind] != NULL)
         {
           Expr qVar = bind::intConst(mkTerm<string> ("_FH_arr_it", m_efac));
           tmpArrAccessVars.push_back(qVar);
@@ -828,11 +847,29 @@ namespace ufo
           if (!u.isEquiv(replCand, mk<TRUE>(m_efac)) && !u.isEquiv(replCand, mk<FALSE>(m_efac)))
           {
             ExprMap replLog;
-
-            if ( prepareArrCand (replCand, replLog, tmpArrAccessVars, ind) &&
+            ExprSet tmpRanges;
+            ExprSet concreteVals;
+            if ( prepareArrCand (replCand, replLog, tmpArrAccessVars, tmpRanges, concreteVals, ind) &&
                 (contains(replCand, iterators[ind]) || !emptyIntersect(replCand, tmpArrAccessVars)))
+            {
+              // very cheeky heuristic: sometimes restrict, but sometimes extend the range
+              // depending on existing constants
+              if (u.isSat(conjoin(tmpRanges, m_efac), conjoin(arrIterRanges[ind], m_efac)))
+              {
+                arrIterRanges[ind].insert(tmpRanges.begin(), tmpRanges.end());
+              }
+              else
+              {
+                for (auto & a : tmpArrCands)
+                  createGroundInstances (concreteVals, candsFromCode, a, iterators[ind]);
+              }
+
+              // at this point it should not happen, but sometimes it does. To debug.
+              if (!findInvVar(ind, replCand, tmpArrAccessVars)) continue;
+
               for (auto iter : tmpArrAccessVars)
                 arrCands[ind].insert(replaceAll(replCand, iterators[ind], iter));
+            }
             else candsFromCode.insert(a);
           }
         }
@@ -924,7 +961,6 @@ namespace ufo
     {
       filterUnsat();
 
-      auto candidatesTmp = candidates;
       if (multiHoudini(ruleManager.wtoCHCs))
       {
         assignPrioritiesForLearned();
@@ -947,7 +983,7 @@ namespace ufo
           {
             checked.clear();
             Expr cand = sf.af.getSimplCand(c);
-//            outs () << " - - - bootstrapped cand for " << i << ":" << *cand << "\n";
+//            outs () << " - - - bootstrapped cand for " << i << ": " << *cand << "\n";
 
             if (!addCandidate(i, cand)) continue;
             if (checkCand(i))
@@ -962,17 +998,37 @@ namespace ufo
             }
           }
         }
-      }
 
-      // second round of bootstrapping (to be removed after Houdini supports arrays)
-      candidates = candidatesTmp;
-      if (multiHoudini(ruleManager.wtoCHCs))
-      {
-        assignPrioritiesForLearned();
-        if (checkAllLemmas())
+        // second round of bootstrapping (to be removed after Houdini supports arrays)
+
+        candidates.clear();
+        ExprVector empt;
+        for (auto &hr: ruleManager.chcs)
         {
-          outs () << "Success after bootstrapping\n";
-          return true;
+          if (hr.isQuery)
+          {
+            int invNum = getVarIndex(hr.srcRelation, decls);
+            ExprSet cnjs;
+            getConj(hr.body, cnjs);
+            for (auto & a : cnjs)
+            {
+              if (isOpX<NEG>(a) && findInvVar(invNum, a, empt))
+              {
+                candidates[invNum].push_back(a->left());
+                break;
+              }
+            }
+            break;
+          }
+        }
+        if (multiHoudini(ruleManager.wtoCHCs))
+        {
+          assignPrioritiesForLearned();
+          if (checkAllLemmas())
+          {
+            outs () << "Success after bootstrapping\n";
+            return true;
+          }
         }
       }
 

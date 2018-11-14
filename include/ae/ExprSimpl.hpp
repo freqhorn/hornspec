@@ -2768,7 +2768,7 @@ namespace ufo
 
     if (cnjs2.size() != 2) return e;
 
-    assert(mergeIneqs(cnjs2[0], cnjs2[1]) != NULL);
+    if(mergeIneqs(cnjs2[0], cnjs2[1]) == NULL) return NULL;
 
     cnjs3.insert(mergeIneqs(cnjs2[0], cnjs2[1]));
     return conjoin(cnjs3, e->getFactory());
