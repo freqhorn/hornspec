@@ -1,0 +1,15 @@
+(declare-rel f (Int))
+(declare-rel g (Int Int))
+(declare-rel fail ())
+(declare-var x Int)
+(declare-var r0 Int)
+(declare-var r1 Int)
+(declare-var r2 Int)
+(declare-var r3 Int)
+(declare-var r4 Int)
+
+(rule (f 1))
+(rule (=> (= r0 (+ x 1)) (g x r0)))
+(rule (=> (and (f r0) (g r0 r1) (= r2 (+ r0 1)) (g r2 r3) (= r4 (+ r1 r2)) (>= r4 10)) fail))
+
+(query fail)
