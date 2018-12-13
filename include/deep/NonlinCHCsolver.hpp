@@ -102,6 +102,11 @@ namespace ufo
             }
             args2.push_back(tmp1);
             body = replaceAll(body, hr.srcVars[j], tmp1);
+            for (auto & a : hr.locVars)
+            {
+              Expr new_name = mkTerm<string> ("_fh_" + to_string(varCnt++), m_efac);
+              body = replaceAll(body, a, cloneVar(a, new_name));
+            }
           }
 
           ssaSteps.push_back(body);

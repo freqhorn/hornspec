@@ -311,6 +311,17 @@ namespace ufo
         hr.assignVarsAndRewrite (origSrcSymbs, tmp,
                                  origDstSymbs, invVars[hr.dstRelation]);
         hr.body = simpleQE(hr.body, hr.locVars);
+
+        // GF: ideally, hr.locVars should be empty after QE,
+        // but the QE procedure is imperfect, so
+        ExprVector body_vars;
+        expr::filter (hr.body, bind::IsConst(), std::inserter (body_vars, body_vars.begin ()));
+        for (auto it = hr.locVars.begin(); it != hr.locVars.end(); )
+        {
+          if (find(body_vars.begin(), body_vars.end(), *it) == body_vars.end())
+            it = hr.locVars.erase(it);
+          else ++it;
+        }
       }
 
       for (int i = 0; i < chcs.size(); i++)
