@@ -91,13 +91,23 @@ namespace ufo
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
 
-    void preprocess (Expr term, vector<ExprVector>& srcVars, ExprVector &srcRelations, ExprSet& lin)
+    bool isFapp (Expr e)
+    {
+      if (isOpX<FAPP>(e))
+        if (e->arity() > 0)
+          if (isOpX<FDECL>(e->arg(0)))
+            if (e->arg(0)->arity() >= 2)
+              return true;
+      return false;
+    }
+
+    void preprocess (Expr term, ExprVector& locVars, vector<ExprVector>& srcVars, ExprVector &srcRelations, ExprSet& lin)
     {
       if (isOpX<AND>(term))
       {
         for (auto it = term->args_begin(), end = term->args_end(); it != end; ++it)
         {
-          preprocess(*it, srcVars, srcRelations, lin);
+          preprocess(*it, locVars, srcVars, srcRelations, lin);
         }
       }
       else
@@ -106,14 +116,14 @@ namespace ufo
         {
           lin.insert(term);
         }
-        if (isOpX<FAPP>(term))
+        if (isOpX<FAPP>(term) && find(locVars.begin(), locVars.end(), term) == locVars.end())
         {
           if (term->arity() > 0)
           {
             if (isOpX<FDECL>(term->arg(0)))
             {
               Expr rel = term->arg(0);
-              if (term->arg(0)->arity() > 2)
+              if (rel->arity() >= 2)
               {
                 addDecl(rel);
                 srcRelations.push_back(rel->arg(0));
@@ -134,11 +144,7 @@ namespace ufo
 
     void addDecl (Expr a)
     {
-      if (a->arity() == 2)
-      {
-        addFailDecl(a->arg(0));
-      }
-      else if (invVars[a->arg(0)].size() == 0)
+      if (invVars[a->arg(0)].size() == 0)
       {
         decls.insert(a);
         for (int i = 1; i < a->arity()-1; i++)
@@ -234,28 +240,19 @@ namespace ufo
           rule = replaceAll(rule, actual_vars, repl_vars);
         }
 
+        if (isOpX<IMPL>(rule) && !isFapp(rule->right()) && !isOpX<FALSE>(rule->right()))
+        {
+          rule = mk<IMPL>(mk<AND>(rule->left(), mk<NEG>(rule->right())), mk<FALSE>(m_efac));
+        }
+
         if (!isOpX<IMPL>(rule)) rule = mk<IMPL>(mk<TRUE>(m_efac), rule);
 
         Expr body = rule->arg(0);
         Expr head = rule->arg(1);
 
-        if (isOpX<FAPP>(head))
-        {
-          addDecl(head->arg(0));
-          hr.head = head->arg(0);
-          hr.dstRelation = head->arg(0)->arg(0);
-        }
-        else
-        {
-          if (!isOpX<FALSE>(head)) body = mk<AND>(body, mk<NEG>(head));
-          addFailDecl(mk<FALSE>(m_efac));
-          hr.head = mk<FALSE>(m_efac);
-          hr.dstRelation = mk<FALSE>(m_efac);
-        }
-
         vector<ExprVector> origSrcSymbs;
         ExprSet lin;
-        preprocess(body, origSrcSymbs, hr.srcRelations, lin);
+        preprocess(body, hr.locVars, origSrcSymbs, hr.srcRelations, lin);
         if (hr.srcRelations.size() == 0)
         {
           if (hasUninterp(body))
@@ -267,9 +264,30 @@ namespace ufo
         }
 
         hr.isFact = hr.srcRelations.empty();
+
+        if (isOpX<FAPP>(head))
+        {
+          if (head->arg(0)->arity() == 2 && !hr.isFact)
+          {
+            addFailDecl(head->arg(0)->arg(0));
+          }
+          else
+          {
+            addDecl(head->arg(0));
+          }
+          hr.head = head->arg(0);
+          hr.dstRelation = head->arg(0)->arg(0);
+        }
+        else
+        {
+          if (!isOpX<FALSE>(head)) body = mk<AND>(body, mk<NEG>(head));
+          addFailDecl(mk<FALSE>(m_efac));
+          hr.head = mk<FALSE>(m_efac);
+          hr.dstRelation = mk<FALSE>(m_efac);
+        }
+
         hr.isQuery = (hr.dstRelation == failDecl);
         hr.isInductive = (hr.srcRelations.size() == 1 && hr.srcRelations[0] == hr.dstRelation);
-
         if (hr.isQuery) qCHCNum = chcs.size() - 1;
 
         ExprVector allOrigSymbs;
