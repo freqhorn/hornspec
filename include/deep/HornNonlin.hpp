@@ -222,11 +222,6 @@ namespace ufo
 
           ExprVector actual_vars;
           expr::filter (rule, bind::IsVar(), std::inserter (actual_vars, actual_vars.begin ()));
-          if (actual_vars.size() == 0)
-          {
-            chcs.pop_back();
-            continue;
-          }
 
           assert(actual_vars.size() <= hr.locVars.size());
 
@@ -242,6 +237,11 @@ namespace ufo
 
         if (isOpX<IMPL>(rule) && !isFapp(rule->right()) && !isOpX<FALSE>(rule->right()))
         {
+          if (isOpX<TRUE>(rule->right()))
+          {
+            chcs.pop_back();
+            continue;
+          }
           rule = mk<IMPL>(mk<AND>(rule->left(), mk<NEG>(rule->right())), mk<FALSE>(m_efac));
         }
 
@@ -276,7 +276,7 @@ namespace ufo
             addDecl(head->arg(0));
           }
           hr.head = head->arg(0);
-          hr.dstRelation = head->arg(0)->arg(0);
+          hr.dstRelation = hr.head->arg(0);
         }
         else
         {

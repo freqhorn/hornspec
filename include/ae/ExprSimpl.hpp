@@ -89,6 +89,34 @@ namespace ufo
     }
   }
 
+  inline static void getCounters (Expr a, ExprVector &cntrs)
+  {
+    if (isOpX<SELECT>(a) || isOpX<STORE>(a)){
+      cntrs.push_back(a->right());
+    } else {
+      for (unsigned i = 0; i < a->arity(); i++)
+        getCounters(a->arg(i), cntrs);
+    }
+  }
+
+  inline static void getArrIneqs (Expr a, ExprSet &ineqs)
+  {
+    if (isOp<ComparissonOp>(a) && containsOp<SELECT>(a)){
+      if (isOpX<EQ>(a))
+      {
+        ineqs.insert(mk<LEQ>(a->left(), a->right()));
+        ineqs.insert(mk<GEQ>(a->left(), a->right()));
+      }
+      else
+      {
+        ineqs.insert(a);
+      }
+    } else {
+      for (unsigned i = 0; i < a->arity(); i++)
+        getArrIneqs(a->arg(i), ineqs);
+    }
+  }
+
   inline static void getMultOps (Expr a, ExprVector &ops)
   {
     if (isOpX<MULT>(a)){
@@ -845,6 +873,8 @@ namespace ufo
     return dagVisit (rw, exp);
   }
 
+  static Expr mkNeg(Expr term);
+
   inline static void simplBoolReplCnjHlp(ExprVector& hardVars, ExprSet& cnjs, ExprVector& facts, ExprVector& repls)
   {
     bool toRestart;
@@ -855,6 +885,14 @@ namespace ufo
       if (isOpX<TRUE>(*it))
       {
         it = cnjs.erase(it);
+        continue;
+      }
+
+      if (isOpX<NEG>(*it))
+      {
+        Expr negged = mkNeg((*it)->left());
+        it = cnjs.erase(it);
+        cnjs.insert(negged);
         continue;
       }
 
@@ -2106,7 +2144,7 @@ namespace ufo
       for (auto it = dsjs.begin(); it != dsjs.end(); ) {
         auto d = *it;
 
-        if (!isOp<ComparissonOp>(d)) { ++it; continue; }
+        if (!isOpX<GEQ>(d) && !isOpX<LEQ>(d) && !isOpX<GT>(d) && !isOpX<LT>(d)) { ++it; continue; }
 
         Expr rewritten = ineqMover(d, var);
 
@@ -2877,6 +2915,223 @@ namespace ufo
     }
     
     return conjoin(cnjs, exp->getFactory());
+  }
+
+  bool isConstExpr(Expr e) {
+    using namespace expr::op::bind;
+    if (isIntConst(e) || isBoolConst(e) || isRealConst(e)) return true;
+    return false;
+  }
+
+  bool isLitExpr(Expr e) {
+    int arity = e->arity();
+    if (isConstExpr(e)) return false;
+    if (arity == 0) return true;
+    bool res = true;
+    for (int i = 0; i < arity; i++) {
+      res = res && isLitExpr(e->arg(i));
+    }
+    return res;
+  }
+
+  bool isConstAddModExpr(Expr e) {
+    using namespace expr::op::bind;
+    if (isOp<PLUS>(e) || isOp<MINUS>(e) || isOp<MOD>(e)) {
+      if (isLitExpr(e->arg(0))) {
+        return isConstAddModExpr(e->arg(1));
+      }
+      if (isLitExpr(e->arg(1))) {
+        return isConstAddModExpr(e->arg(0));
+      }
+    }
+    return isConstExpr(e);
+  }
+
+  bool isNonlinear(Expr e) {
+    int arity = e->arity();
+    if (isOp<MOD>(e)) {
+      if (isLitExpr(e->arg(0))) {
+        return !(isLitExpr(e->arg(1)) || !isConstExpr(e->arg(1)));
+      }
+      if (isLitExpr(e->arg(1))) {
+        return !(isConstAddModExpr(e->arg(0)));
+      }
+      return true;
+    }
+    if (isOp<MULT>(e) || isOp<DIV>(e)) {
+      if (isLitExpr(e->arg(0))) {
+        return isNonlinear(e->arg(1));
+      }
+      if (isLitExpr(e->arg(1))) {
+        return isNonlinear(e->arg(0));
+      }
+      return true;
+    }
+    bool res = false;
+    for (int i = 0; i < arity; i++) {
+      res = res || isNonlinear(e->arg(i));
+    }
+    return res;
+  }
+
+  inline static bool isNumeric(Expr a)
+  {
+    // don't consider ITE-s
+    return (isOp<NumericOp>(a) || isOpX<MPZ>(a) ||
+            isOpX<MPQ>(a) || bind::isIntConst(a) || isOpX<SELECT>(a));
+  }
+
+  inline static bool evalLeq(Expr a, Expr b)
+  {
+    if (isOpX<MPZ>(a) && isOpX<MPZ>(b))
+      return (lexical_cast<int>(a) <= lexical_cast<int>(b));
+    else return (a == b); // GF: to extend
+  }
+
+  inline static void mutateHeuristic (Expr exp, ExprSet& guesses /*, int bnd = 100*/)
+  {
+    exp = unfoldITE(exp);
+    ExprSet cnjs;
+    getConj(exp, cnjs);
+    ExprSet ineqs;
+    ExprSet eqs;
+    ExprSet disjs;
+    for (auto c : cnjs)
+    {
+      if (isOpX<NEG>(c)) c = mkNeg(c->left());
+
+      if (isOpX<EQ>(c))
+      {
+        if (isNumeric(c->left()))
+        {
+          eqs.insert(c);
+          ineqs.insert(mk<LEQ>(c->right(), c->left()));
+          ineqs.insert(mk<LEQ>(c->left(), c->right()));
+        }
+        else
+        {
+          guesses.insert(c);
+        }
+      }
+      else if (isOp<ComparissonOp>(c))
+      {
+        if (isOpX<LEQ>(c)) ineqs.insert(c);
+        else if (isOpX<GEQ>(c)) ineqs.insert(mk<LEQ>(c->right(), c->left()));
+        else if (isOpX<GT>(c))
+        {
+          if (isOpX<MPZ>(c->left()))
+            ineqs.insert(mk<LEQ>(c->right(), mkTerm (mpz_class (lexical_cast<int>(c->left())-1), exp->getFactory())));
+          else if(isOpX<MPZ>(c->right()))
+            ineqs.insert(mk<LEQ>(mkTerm (mpz_class (lexical_cast<int>(c->right())+1), exp->getFactory()), c->left()));
+          else
+            ineqs.insert(mk<LEQ>(c->right(), mk<MINUS>(c->left(), mkTerm (mpz_class (1), exp->getFactory()))));
+        }
+        else if (isOpX<LT>(c))
+        {
+          if (isOpX<MPZ>(c->left()))
+            ineqs.insert(mk<LEQ>(mkTerm (mpz_class (lexical_cast<int>(c->left())+1), exp->getFactory()), c->right()));
+          else if(isOpX<MPZ>(c->right()))
+            ineqs.insert(mk<LEQ>(c->left(), mkTerm (mpz_class (lexical_cast<int>(c->right())-1), exp->getFactory())));
+          else
+            ineqs.insert(mk<LEQ>(c->left(), mk<MINUS>(c->right(), mkTerm (mpz_class (1), exp->getFactory()))));
+        }
+        else
+        {
+          assert (isOpX<NEQ>(c));
+          guesses.insert(c);
+        }
+      }
+      else if (isOpX<OR>(c))
+      {
+        ExprSet terms;
+        getDisj(c, terms);
+        ExprSet newTerms;
+        for (auto t : terms)
+        {
+          if (newTerms.size() > 2) continue; // don't consider large disjunctions
+          if (isOpX<NEG>(t)) t = mkNeg(t->left());
+          if (!isOp<ComparissonOp>(t)) continue;
+          if (!isNumeric(t->left())) continue;
+          newTerms.insert(t);
+        }
+        c = disjoin(newTerms, c->getFactory());
+        disjs.insert(c);
+        guesses.insert(c);
+      }
+      else guesses.insert(c);
+    }
+
+    guesses.insert(ineqs.begin(), ineqs.end());
+
+    for (auto & z : eqs)
+    {
+      for (auto & in : ineqs)
+      {
+        //if (bnd > guesses.size()) return;
+        if (!emptyIntersect(z, in)) continue;
+        guesses.insert(mk<LEQ>(mk<PLUS>(in->left(), z->left()), mk<PLUS>(in->right(), z->right())));
+        guesses.insert(mk<LEQ>(mk<PLUS>(in->left(), z->right()), mk<PLUS>(in->right(), z->left())));
+      }
+
+      for (auto & d : disjs)
+      {
+        //if (bnd > guesses.size()) return;
+        ExprSet terms;
+        getDisj(d, terms);
+        ExprSet newTerms;
+        for (auto c : terms)
+        {
+          if (isOp<ComparissonOp>(c))
+          {
+            if (emptyIntersect(z, c))
+              newTerms.insert(reBuildCmp(c,
+                mk<PLUS>(c->left(), z->left()), mk<PLUS>(c->right(), z->right())));
+            else newTerms.insert(c);
+          }
+          else newTerms.insert(c);
+        }
+        if (newTerms.size() > 0)
+          guesses.insert(disjoin(newTerms, d->getFactory()));
+      }
+    }
+
+    for (auto & e : eqs)
+    {
+      for (auto & in : ineqs)
+      {
+        //if (bnd > guesses.size()) return;
+        assert(isOpX<LEQ>(in));
+        Expr g;
+        if (in->left() == e->left() && !evalLeq(e->right(), in->right()))
+          g = mk<LEQ>(e->right(), in->right());
+        else if (in->left() == e->right() && !evalLeq(e->left(), in->right()))
+          g = mk<LEQ>(e->left(), in->right());
+        else if (in->right() == e->left() && !evalLeq(in->left(), e->right()))
+          g = mk<LEQ>(in->left(), e->right());
+        else if (in->right() == e->right() && !evalLeq(in->left(), e->left()))
+          g = mk<LEQ>(in->left(), e->left());
+
+        if (g != NULL) guesses.insert(g);
+      }
+    }
+
+    for (auto & in1 : ineqs)
+    {
+      for (auto & in2 : ineqs)
+      {
+//        if (bnd > guesses.size()) return;
+        if (in1 == in2) continue;
+
+        assert(isOpX<LEQ>(in1));
+        assert(isOpX<LEQ>(in2));
+
+        if (evalLeq(in1->right(), in2->left()) &&
+            !evalLeq(in1->left(), in2->right()))
+        {
+          guesses.insert(mk<LEQ>(in1->left(), in2->right()));
+        }
+      }
+    }
   }
 }
 

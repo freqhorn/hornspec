@@ -5,6 +5,6 @@ using namespace std;
 
 int main (int argc, char ** argv)
 {
-  solveModular(string(argv[argc-1]));
+  solveNonlin(string(argv[argc-1]));
   return 0;
 }

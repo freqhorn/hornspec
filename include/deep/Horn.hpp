@@ -217,11 +217,11 @@ namespace ufo
 
           ExprVector actual_vars;
           expr::filter (rule, bind::IsVar(), std::inserter (actual_vars, actual_vars.begin ()));
-          if (actual_vars.size() == 0)
-          {
-            chcs.pop_back();
-            continue;
-          }
+//          if (actual_vars.size() == 0)
+//          {
+//            chcs.pop_back();
+//            continue;
+//          }
 
           assert(actual_vars.size() <= hr.locVars.size());
 

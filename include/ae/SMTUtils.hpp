@@ -12,55 +12,92 @@ namespace ufo
   
   class SMTUtils {
   private:
-    
+
     ExprFactory &efac;
     EZ3 z3;
     ZSolver<EZ3> smt;
-    
+
   public:
-    
+
     SMTUtils (ExprFactory& _efac) :
     efac(_efac),
     z3(efac),
     smt (z3)
     {}
 
-    Expr getModel(ExprVector& vars)
+    template <typename T> Expr getModel(T& vars)
     {
       ExprVector eqs;
       ZSolver<EZ3>::Model m = smt.getModel();
-      for (auto & v : vars) if (v != m.eval(v))
+      for (auto & v : vars)
       {
-        eqs.push_back(mk<EQ>(v, m.eval(v)));
+        Expr e = m.eval(v);
+        if (e == NULL)
+        {
+          return NULL;
+        }
+        else if (e != v)
+        {
+          eqs.push_back(mk<EQ>(v, e));
+        }
+        else
+        {
+          if (bind::isBoolConst(v))
+          eqs.push_back(mk<EQ>(v, mk<TRUE>(efac)));
+          else if (bind::isIntConst(v))
+          eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (0), efac)));
+        }
       }
       return conjoin (eqs, efac);
+    }
+
+    ExprSet allVars;
+    Expr getModel() { return getModel(allVars); }
+
+    template <typename T> boost::tribool isSat(T& cnjs, bool reset=true)
+    {
+      allVars.clear();
+      if (reset) smt.reset();
+      for (auto & c : cnjs)
+      {
+        filter (c, bind::IsConst (), inserter (allVars, allVars.begin()));
+        if (isOpX<FORALL>(c))
+        {
+          ExprVector varz;
+          for (int i = 0; i < c->arity() - 1; i++)
+          {
+            varz.push_back(bind::fapp(c->arg(i)));
+          }
+          smt.assertForallExpr(varz, c->last());
+        }
+        else
+        {
+          if (containsOp<FORALL>(c)) return logic::indeterminate;
+          smt.assertExpr(c);
+        }
+      }
+      boost::tribool res = smt.solve ();
+      return res;
+    }
+    /**
+     * SMT-check
+     */
+    boost::tribool isSat(Expr a, Expr b, bool reset=true)
+    {
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      getConj(b, cnjs);
+      return isSat(cnjs, reset);
     }
 
     /**
      * SMT-check
      */
-    bool isSat(Expr a, Expr b)
+    boost::tribool isSat(Expr a, bool reset=true)
     {
-      smt.reset();
-      smt.assertExpr (a);
-      smt.assertExpr (b);
-      if (!smt.solve ()) {
-        return false;
-      }
-      return true;
-    }
-    
-    /**
-     * SMT-check
-     */
-    bool isSat(Expr a, bool reset=true)
-    {
-      if (reset) smt.reset();
-      smt.assertExpr (a);
-      if (!smt.solve ()) {
-        return false;
-      }
-      return true;
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      return isSat(cnjs, reset);
     }
 
     /**
@@ -70,7 +107,7 @@ namespace ufo
     {
       return implies (a, b) && implies (b, a);
     }
-    
+
     /**
      * SMT-based implication check
      */
@@ -78,17 +115,17 @@ namespace ufo
     {
       if (isOpX<TRUE>(b)) return true;
       if (isOpX<FALSE>(a)) return true;
-      return ! isSat(a, mk<NEG>(b));
+      return ! isSat(a, mkNeg(b));
     }
-    
+
     /**
      * SMT-based check for a tautology
      */
     bool isTrue(Expr a){
       if (isOpX<TRUE>(a)) return true;
-      return !isSat(mk<NEG>(a));
+      return !isSat(mkNeg(a));
     }
-    
+
     /**
      * SMT-based check for false
      */
@@ -140,7 +177,7 @@ namespace ufo
         return ex;
       }
     }
-    
+
     /**
      * ITE-simplifier (prt 1)
      */
@@ -178,7 +215,7 @@ namespace ufo
       }
       return ex;
     }
-    
+
     /**
      * Remove some redundant conjuncts from the set of formulas
      */
@@ -195,10 +232,25 @@ namespace ufo
           continue;
         }
         
+        ExprSet old;
+        for (Expr e: newCnjs) old.insert(e);
         ExprSet newCnjsTry = newCnjs;
         newCnjsTry.erase(cnj);
         
-        if (implies (conjoin(newCnjsTry, efac), cnj)) newCnjs.erase(cnj);
+        Expr newConj = conjoin(newCnjsTry, efac);
+        if (implies (newConj, cnj))
+          newCnjs.erase(cnj);
+
+        else {
+          // workaround for arrays or complicated expressions
+          Expr new_name = mkTerm<string> ("subst", cnj->getFactory());
+          Expr new_conj = bind::boolConst(new_name);
+          Expr tmp = replaceAll(newConj, cnj, new_conj);
+          if (implies (tmp, new_conj)) {
+            errs() << "erased\n";
+            newCnjs.erase(cnj);
+          }
+        }
       }
       conjs = newCnjs;
     }
@@ -221,27 +273,39 @@ namespace ufo
     /**
      * Remove some redundant disjuncts from the formula
      */
+    void removeRedundantDisjuncts(ExprSet& disjs)
+    {
+      if (disjs.size() < 2) return;
+      ExprSet newDisjs = disjs;
+
+      for (auto & disj : disjs)
+      {
+        if (isFalse (disj))
+        {
+          newDisjs.erase(disj);
+          continue;
+        }
+
+        ExprSet newDisjsTry = newDisjs;
+        newDisjsTry.erase(disj);
+
+        if (implies (disj, disjoin(newDisjsTry, efac))) newDisjs.erase(disj);
+      }
+      disjs = newDisjs;
+    }
+
     Expr removeRedundantDisjuncts(Expr exp)
     {
-      ExprSet newDisj;
       ExprSet disjs;
       getDisj(exp, disjs);
-      
       if (disjs.size() < 2) return exp;
-      
-      for (auto & disj : disjs)      // GF: todo: incremental solving
+      else
       {
-        if (isFalse (disj)) continue;
-        
-        if (isEquiv (disjoin(newDisj, efac), mk<OR>(disjoin(newDisj, efac), disj))) continue;
-        
-        newDisj.insert(disj);
+        removeRedundantDisjuncts(disjs);
+        return disjoin(disjs, efac);
       }
-      
-      return disjoin(newDisj, efac);
     }
-    
-    
+
     /**
      * Model-based simplification of a formula with 1 (one only) variable
      */
@@ -278,17 +342,17 @@ namespace ufo
   {
     ExprFactory &efac = A->getFactory();
     EZ3 z3(efac);
-    
+
     ExprVector allVars;
     filter (mk<AND>(A,B), bind::IsConst (), back_inserter (allVars));
-    
+
     ExprVector sharedTypes;
-    
+
     for (auto &var: sharedVars) {
       sharedTypes.push_back (bind::typeOf (var));
     }
     sharedTypes.push_back (mk<BOOL_TY> (efac));
-    
+
     // fixed-point object
     ZFixedPoint<EZ3> fp (z3);
     ZParams<EZ3> params (z3);
@@ -297,18 +361,18 @@ namespace ufo
     params.set (":xform.inline-linear", false);
     params.set (":xform.inline-eager", false);
     fp.set (params);
-    
+
     Expr errRel = bind::boolConstDecl(mkTerm<string> ("err", efac));
     fp.registerRelation(errRel);
     Expr errApp = bind::fapp (errRel);
-    
+
     Expr itpRel = bind::fdecl (mkTerm<string> ("itp", efac), sharedTypes);
     fp.registerRelation (itpRel);
     Expr itpApp = bind::fapp (itpRel, sharedVars);
-    
+
     fp.addRule(allVars, boolop::limp (A, itpApp));
     fp.addRule(allVars, boolop::limp (mk<AND> (B, itpApp), errApp));
-    
+
     tribool res;
     try {
       res = fp.query(errApp);
@@ -318,9 +382,9 @@ namespace ufo
       outs() << "Z3 ex: " << str << "...\n";
       exit(55);
     }
-    
+
     if (res) return NULL;
-    
+
     return fp.getCoverDelta(itpApp);
   }
   
@@ -330,13 +394,13 @@ namespace ufo
   inline Expr getItp(Expr A, Expr B)
   {
     ExprVector sharedVars;
-    
+
     ExprVector aVars;
     filter (A, bind::IsConst (), back_inserter (aVars));
-    
+
     ExprVector bVars;
     filter (B, bind::IsConst (), back_inserter (bVars));
-    
+
     // computing shared vars:
     for (auto &var: aVars) {
       if (find(bVars.begin(), bVars.end(), var) != bVars.end())
@@ -344,7 +408,7 @@ namespace ufo
         sharedVars.push_back(var);
       }
     }
-    
+
     return getItp(A, B, sharedVars);
   };
   
