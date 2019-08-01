@@ -1,5 +1,5 @@
-#ifndef BNDEXPL__HPP__
-#define BNDEXPL__HPP__
+#ifndef NONLINCHCSOLVER__HPP__
+#define NONLINCHCSOLVER__HPP__
 
 #include "HornNonlin.hpp"
 
@@ -36,8 +36,9 @@ namespace ufo
     CHCs& ruleManager;
     int varCnt = 0;
     ExprVector ssaSteps;
-    map<Expr, Expr> over;
-    map<Expr, ExprSet> allGuesses;
+    map<Expr, ExprSet> over;
+    map<Expr, ExprSet> candidates;
+    ExprSet propProgress; // for stats
 
     public:
 
@@ -69,56 +70,36 @@ namespace ufo
       for (auto & hr : ruleManager.chcs)
       {
         if (hr.isQuery && !checkQuery) continue;
-        ExprSet checkList;
-        checkList.insert(hr.body);
-        Expr overBody;
-        Expr rel;
-        for (int i = 0; i < hr.srcRelations.size(); i++)
-        {
-          Expr rel = hr.srcRelations[i];
-          overBody = replaceAll(over[rel], ruleManager.invVars[rel], hr.srcVars[i]);
-          getConj(overBody, checkList);
-        }
-        if (!hr.isQuery)
-        {
-          rel = hr.dstRelation;
-          ExprSet tmp;
-          ExprSet negged;
-          getConj(replaceAll(over[rel], ruleManager.invVars[rel], hr.dstVars), tmp);
-          for (auto a : tmp) negged.insert(mkNeg(a));
-          checkList.insert(disjoin(negged, m_efac));
-        }
-        if (u.isSat(checkList)) return false;
+        if (!checkCHC(hr, candidates)) return false;
       }
       return true;
     }
 
-    bool fastGuessCheck (Expr tgt, Expr guess, bool toAdd = true) {
-      Expr ov = over[tgt];
-      if (u.implies(ov, guess)) return true;
-      over[tgt] = mk<AND>(ov, guess);
-
-      if (checkAllOver())
+    bool checkCHC (HornRuleExt& hr, map<Expr, ExprSet>& annotations)
+    {
+      ExprSet checkList;
+      checkList.insert(hr.body);
+      Expr overBody;
+      Expr rel;
+      for (int i = 0; i < hr.srcRelations.size(); i++)
       {
-        //errs()  << " guess: " << *guess << " -> true!\n";
-        if (toAdd)
-        {
-          // recheck old guesses
-          for (auto it = allGuesses[tgt].begin(); it != allGuesses[tgt].end(); )
-          {
-            if (fastGuessCheck(tgt, *it, false)) it = allGuesses[tgt].erase(it);
-            else ++it;
-          }
-          for (auto & g : allGuesses[tgt]) fastGuessCheck(tgt, g, false);
-        }
-        return true;
+        Expr rel = hr.srcRelations[i];
+        ExprSet lms = annotations[rel];
+        lms.insert(over[rel].begin(), over[rel].end());
+        overBody = replaceAll(conjoin(lms, m_efac), ruleManager.invVars[rel], hr.srcVars[i]);
+        getConj(overBody, checkList);
       }
-      else
+      if (!hr.isQuery)
       {
-        over[tgt] = ov;
-        if (toAdd) allGuesses[tgt].insert(guess);
-        return false;
+        rel = hr.dstRelation;
+        ExprSet negged;
+        ExprSet lms = annotations[rel];
+        lms.insert(over[rel].begin(), over[rel].end());
+        for (auto a : lms)
+          negged.insert(mkNeg(replaceAll(a, ruleManager.invVars[rel], hr.dstVars)));
+        checkList.insert(disjoin(negged, m_efac));
       }
+      return !u.isSat(checkList);
     }
 
     void preproGuessing(Expr e, ExprVector& ev1, ExprVector& ev2, ExprSet& guesses)
@@ -161,63 +142,195 @@ namespace ufo
 
     void bootstrapping()
     {
-      map<Expr, ExprSet> preconds;
-      for (auto & r : ruleManager.chcs) {
-        ExprSet guesses;
-        if (r.isQuery)
-        {
-          for (int i = 0; i < r.srcVars.size(); i++)
-          {
-            ExprSet vars;
-            vars.insert(r.locVars.begin(), r.locVars.end());
-            Expr q = quantifierElimination(r.body, vars); //we shouldn't do it here; to fix
-            guesses.clear();
-            preproGuessing(mk<NEG>(q), r.srcVars[i],
-                           ruleManager.invVars[r.srcRelations[i]], guesses);
-            for (auto & guess : guesses) fastGuessCheck(r.srcRelations[i], guess);
-          }
+      for (auto & a : ruleManager.decls) propProgress.insert(a->left()); // for stats
 
+      for (auto & hr : ruleManager.chcs)
+      {
+        if (hr.isQuery)
+        {
+          if (!containsOp<ARRAY_TY>(hr.body))
+          {
+            for (int i = 0; i < hr.srcVars.size(); i++)
+            {
+              ExprSet vars;
+              vars.insert(hr.locVars.begin(), hr.locVars.end());
+              Expr q = quantifierElimination(hr.body, vars); //we shouldn't do it here; to fix
+              preproGuessing(mk<NEG>(q), hr.srcVars[i],
+                             ruleManager.invVars[hr.srcRelations[i]], candidates[hr.srcRelations[i]]);
+              if (!candidates[hr.srcRelations[i]].empty()) propProgress.erase(hr.srcRelations[i]); // for stats
+            }
+          }
           continue;
         }
 
-        int srcRelInd = -1;
-        for (int i = 0; i < r.srcVars.size(); i++) if (r.srcRelations[i] == r.head->arg(0)) srcRelInd = i;
-        if (srcRelInd >= 0)
-          preproGuessing(r.body, r.srcVars[srcRelInd],
-                      ruleManager.invVars[r.head->arg(0)], preconds[r.head->arg(0)]);
+        Expr rel = hr.head->left();
+        preproGuessing(hr.body, hr.dstVars, ruleManager.invVars[rel], candidates[hr.dstRelation]);
+        if (!candidates[hr.dstRelation].empty()) propProgress.erase(hr.dstRelation);  // for stats
+      }
+    }
 
-        preproGuessing(r.body, r.dstVars, ruleManager.invVars[r.head->arg(0)], guesses);
-
-        for (auto guess : guesses) fastGuessCheck(r.head->arg(0), guess);
-
-        // get "implication" guesses
-        int tot = 0;
-        for (auto guess : allGuesses[r.head->arg(0)])
+    void propagateCandidatesForward()
+    {
+      for (auto & hr : ruleManager.chcs)
+      {
+        if (hr.isQuery) continue;
+        ExprSet all;
+        all.insert(hr.body);
+        for (int i = 0; i < hr.srcVars.size(); i++)
         {
-          if (tot > 30) break; // empirically chosen bound
-          if (isOpX<IMPL>(guess)) continue; // hack
+          Expr rel = hr.srcRelations[i];
+          // currently, tries all candidates; but in principle, should try various subsets
+          for (auto & c : candidates[rel])
+            all.insert(replaceAll(c, ruleManager.invVars[rel], hr.srcVars[i]));
+        }
+        preproGuessing(conjoin(all, m_efac), hr.dstVars,
+                       ruleManager.invVars[hr.dstRelation], candidates[hr.dstRelation]);
+      }
+    }
 
-          for (auto & pre : preconds[r.head->arg(0)])
+    void propagateCandidatesBackward()
+    {
+      // TODO
+    }
+
+    void getImplicationGuesses(map<Expr, ExprSet>& postconds)
+    {
+      map<Expr, ExprSet> preconds;
+      for (auto & r : ruleManager.chcs)
+      {
+        if (r.isQuery) continue;
+
+        int srcRelInd = -1;
+        Expr rel = r.head->left();
+        for (int i = 0; i < r.srcVars.size(); i++) if (r.srcRelations[i] == rel) srcRelInd = i;
+        if (srcRelInd >= 0)
+          preproGuessing(r.body, r.srcVars[srcRelInd], ruleManager.invVars[rel], preconds[rel]);
+
+        if (srcRelInd == -1) continue;
+        int tot = 0;
+        for (auto guess : postconds[rel])
+        {
+          if (tot > 5) break; // empirically chosen bound
+          if (isOpX<IMPL>(guess) || isOpX<OR>(guess)) continue; // hack
+
+          for (auto & pre : preconds[rel])
           {
             if (u.implies(pre, guess)) continue;
             tot++;
             Expr newGuess = mk<IMPL>(pre, guess);
-            if (fastGuessCheck(r.head->arg(0), newGuess))
+            ExprVector tmp;
+            tmp.push_back(replaceAll(newGuess, ruleManager.invVars[rel], r.srcVars[srcRelInd]));
+            tmp.push_back(r.body);
+            // simple invariant check (for speed, need to be enhanced)
+            if (u.implies (conjoin(tmp, m_efac), replaceAll(newGuess, ruleManager.invVars[rel], r.dstVars)))
             {
-              ExprSet tmpGuesses;
-              int srcRelInd = -1;
-              for (int i = 0; i < r.srcVars.size(); i++) if (r.srcRelations[i] == r.head->arg(0)) srcRelInd = i;
-              if (srcRelInd == -1) continue;
-              ExprVector tmp;
-              tmp.push_back(replaceAll(newGuess, ruleManager.invVars[r.head->arg(0)], r.srcVars[srcRelInd]));
-              tmp.push_back(r.body);
-              tmp.push_back(mkNeg(replaceAll(pre, ruleManager.invVars[r.head->arg(0)], r.dstVars)));
-              preproGuessing(conjoin(tmp, m_efac), r.dstVars, ruleManager.invVars[r.head->arg(0)], tmpGuesses);
-              for (auto guess : tmpGuesses) fastGuessCheck(r.head->arg(0), guess);
+        candidates[rel].insert(newGuess);
+              ExprSet newPost;
+              tmp.push_back(mkNeg(replaceAll(pre, ruleManager.invVars[rel], r.dstVars)));
+              preproGuessing(conjoin(tmp, m_efac), r.dstVars, ruleManager.invVars[rel], newPost);
+              for (auto & a : newPost)
+              {
+          candidates[rel].insert(mk<IMPL>(mk<NEG>(pre), a));
+              }
             }
           }
         }
       }
+    }
+
+    bool filterUnsat()
+    {
+      vector<HornRuleExt*> worklist;
+      for (auto & a : candidates)
+        if (!u.isSat(a.second))
+          for (auto & hr : ruleManager.chcs)
+            if (hr.dstRelation == a.first) worklist.push_back(&hr);
+
+      multiHoudini(worklist, false);
+
+      for (auto & a : candidates)
+      {
+        if (!u.isSat(a.second))
+        {
+          ExprVector tmp;
+          ExprVector stub; // TODO: try greedy search, maybe some lemmas are in stub?
+          u.splitUnsatSets(a.second, tmp, stub);
+          a.second.clear();
+          a.second.insert(tmp.begin(), tmp.end());
+        }
+      }
+
+      return true;
+    }
+
+    bool hasQuantifiedCands(map<Expr, ExprSet>& cands)
+    {
+      for (auto & a : cands)
+        for (auto & b : a.second)
+          if (containsOp<FORALL>(b)) return true;
+
+      return false;
+    }
+
+    // adapted from RndLearnerV3
+    bool multiHoudini(vector<HornRuleExt*>& worklist, bool recur = true)
+    {
+      if (!anyProgress(worklist)) return false;
+      auto candidatesTmp = candidates;
+      bool res1 = true;
+      for (auto & hr : worklist)
+      {
+        if (hr->isQuery) continue;
+
+        if (!checkCHC(*hr, candidatesTmp))
+        {
+          bool res2 = true;
+          Expr dstRel = hr->dstRelation;
+
+          Expr model = u.getModel(hr->dstVars);
+          if (model == NULL || hasQuantifiedCands(candidatesTmp))
+          {
+            candidatesTmp[dstRel].clear();
+            res2 = false;
+          }
+          else
+          {
+            for (auto it = candidatesTmp[dstRel].begin(); it != candidatesTmp[dstRel].end(); )
+            {
+              Expr repl = *it;
+              repl = replaceAll(*it, ruleManager.invVars[dstRel], hr->dstVars);
+
+              if (!u.isSat(model, repl)) { it = candidatesTmp[dstRel].erase(it); res2 = false; }
+              else ++it;
+            }
+          }
+
+          if (recur && !res2) res1 = false;
+          if (!res1) break;
+        }
+      }
+      candidates = candidatesTmp;
+      if (!recur) return false;
+      if (res1)
+      {
+        if (anyProgress(worklist))
+        {
+          for (auto & a : candidates) over[a.first].insert(a.second.begin(), a.second.end());
+          return true;
+        }
+        else return false;
+      }
+      else return multiHoudini(worklist);
+    }
+
+    bool anyProgress(vector<HornRuleExt*>& worklist)
+    {
+      for (auto & a : candidates)
+        for (auto & hr : worklist)
+          if (find(hr->srcRelations.begin(), hr->srcRelations.end(), a.first) !=
+              hr->srcRelations.end() || hr->dstRelation == a.first)
+            if (!a.second.empty()) return true;
+      return false;
     }
 
     // only one level of propagation here; to be extended
@@ -300,8 +413,15 @@ namespace ufo
         ExprVector args;
         args.push_back(qVar->left());
         args.push_back(mk<IMPL>(range, s));
-        if (fastGuessCheck(tgt, mknary<FORALL>(args), true))
+        Expr newGuess = mknary<FORALL>(args);
+
+        ExprVector chk;
+        chk.push_back(replaceAll(newGuess, ruleManager.invVars[tgt], hr->srcVars[0]));
+        chk.push_back(hr->body);
+        // simple invariant check (for speed, need to be enhanced)
+        if (u.implies (conjoin(chk, m_efac), replaceAll(newGuess, ruleManager.invVars[tgt], hr->dstVars)))
         {
+          candidates[tgt].insert(newGuess);
           // try to propagate (only one level now; TODO: extend)
           for (auto & hr2 : ruleManager.chcs)
           {
@@ -353,7 +473,7 @@ namespace ufo
               newCand = replaceAll(newCand, hr2.dstVars, ruleManager.invVars[hr2.dstRelation]);
 
               // finally, try the propagated guess:
-              fastGuessCheck(hr2.dstRelation, newCand);
+              candidates[hr2.dstRelation].insert(newCand);
             }
           }
         }
@@ -363,10 +483,30 @@ namespace ufo
     // very restricted version of FreqHorn (no grammars, limited use of arrays)
     void guessAndSolve()
     {
-      for (auto tgt : ruleManager.decls) over[tgt->left()] = mk<TRUE>(m_efac);
       bootstrapping();
+
+      auto post = candidates;
+      filterUnsat();
+      propagateCandidatesForward();
+
+      vector<HornRuleExt*> worklist;
+      for (auto & hr : ruleManager.chcs) worklist.push_back(&hr); // todo: wto
+
+      multiHoudini(worklist);
+      if (checkAllOver(true)) { outs () << "unsat\n"; return; }
+
+      candidates.clear();
+      getImplicationGuesses(post);
+      filterUnsat();
+      multiHoudini(worklist);
+      if (checkAllOver(true)) { outs () << "unsat\n"; return; }
+
+      candidates.clear();
       for (auto tgt : ruleManager.decls) arrayGuessing(tgt->left());
-      outs () << ((checkAllOver(true)) ? "unsat\n" : "unknown\n");
+      filterUnsat();
+      multiHoudini(worklist);
+      if (checkAllOver(true)) { outs () << "unsat\n"; return; }
+      outs () << "unknown\n";
     }
 
     // naive solving, without invariant generation

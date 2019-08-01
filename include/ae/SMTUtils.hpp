@@ -147,7 +147,7 @@ namespace ufo
       ExprSet assumptions;
       assumptions.insert(mk<NEQ>(v, val));
 
-      return (!isSat(conjoin(assumptions, efac), false));
+      return (!isSat(assumptions, false));
     }
 
     /**
@@ -332,6 +332,31 @@ namespace ufo
 
       smt.toSmtLib (outs());
       outs().flush ();
+    }
+
+    template <typename Range> bool splitUnsatSets(Range & src, ExprVector & dst1, ExprVector & dst2)
+    {
+      if (isSat(src)) return false;
+
+      for (auto & a : src) dst1.push_back(a);
+
+      for (auto it = dst1.begin(); it != dst1.end(); )
+      {
+        dst2.push_back(*it);
+        it = dst1.erase(it);
+        if (isSat(dst1)) break;
+      }
+
+      // now dst1 is SAT, try to get more things from dst2 back to dst1
+
+      for (auto it = dst2.begin(); it != dst2.end(); )
+      {
+        if (!isSat(conjoin(dst1, efac), *it)) { ++it; continue; }
+        dst1.push_back(*it);
+        it = dst2.erase(it);
+      }
+
+      return true;
     }
   };
   

@@ -512,31 +512,6 @@ namespace ufo
       return false;
     }
 
-    bool splitUnsatSets(ExprVector & src, ExprVector & dst1, ExprVector & dst2)
-    {
-      if (u.isSat(conjoin(src, m_efac))) return false;
-
-      for (auto & a : src) dst1.push_back(a);
-
-      for (auto it = dst1.begin(); it != dst1.end(); )
-      {
-        dst2.push_back(*it);
-        it = dst1.erase(it);
-        if (u.isSat(conjoin(dst1, m_efac))) break;
-      }
-
-      // now dst1 is SAT, try to get more things from dst2 back to dst1
-
-      for (auto it = dst2.begin(); it != dst2.end(); )
-      {
-        if (!u.isSat(conjoin(dst1, m_efac), *it)) { ++it; continue; }
-        dst1.push_back(*it);
-        it = dst2.erase(it);
-      }
-
-      return true;
-    }
-
     bool filterUnsat()
     {
       vector<HornRuleExt*> worklist;
@@ -560,7 +535,7 @@ namespace ufo
         {
           ExprVector tmp;
           ExprVector stub; // TODO: try greedy search, maybe some lemmas are in stub?
-          splitUnsatSets(candidates[i], tmp, stub);
+          u.splitUnsatSets(candidates[i], tmp, stub);
           candidates[i] = tmp;
         }
       }

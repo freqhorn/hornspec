@@ -3061,7 +3061,6 @@ namespace ufo
       else guesses.insert(c);
     }
 
-    guesses.insert(ineqs.begin(), ineqs.end());
 
     for (auto & z : eqs)
     {
@@ -3069,8 +3068,8 @@ namespace ufo
       {
         //if (bnd > guesses.size()) return;
         if (!emptyIntersect(z, in)) continue;
-        guesses.insert(mk<LEQ>(mk<PLUS>(in->left(), z->left()), mk<PLUS>(in->right(), z->right())));
-        guesses.insert(mk<LEQ>(mk<PLUS>(in->left(), z->right()), mk<PLUS>(in->right(), z->left())));
+        ineqs.insert(mk<LEQ>(mk<PLUS>(in->left(), z->left()), mk<PLUS>(in->right(), z->right())));
+        ineqs.insert(mk<LEQ>(mk<PLUS>(in->left(), z->right()), mk<PLUS>(in->right(), z->left())));
       }
 
       for (auto & d : disjs)
@@ -3094,6 +3093,8 @@ namespace ufo
           guesses.insert(disjoin(newTerms, d->getFactory()));
       }
     }
+
+    guesses.insert(ineqs.begin(), ineqs.end());
 
     for (auto & e : eqs)
     {
