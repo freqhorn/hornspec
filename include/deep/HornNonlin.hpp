@@ -355,8 +355,10 @@ namespace ufo
       else
       {
         if (failDecl != decl)
-        outs () << "Multiple queries are not supported\n";
-        exit(0);
+        {
+          outs () << "Multiple queries are not supported\n";
+          exit(0);
+        }
       }
     }
 
