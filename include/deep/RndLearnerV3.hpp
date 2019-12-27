@@ -31,7 +31,7 @@ namespace ufo
     RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, bool freqs, bool aggp) :
       RndLearnerV2 (efac, z3, r, freqs, aggp){}
 
-    bool checkInit(int invNum, Expr rel)
+    bool checkInit(Expr rel)
     {
       vector<HornRuleExt*> adjacent;
       for (auto &hr: ruleManager.chcs)
@@ -299,7 +299,7 @@ namespace ufo
     bool checkCand(int invNum)
     {
       Expr rel = decls[invNum];
-      if (!checkInit(invNum, rel)) return false;
+      if (!checkInit(rel)) return false;
       if (!checkInductiveness(rel)) return false;
 
       return propagate(invNum, conjoin(candidates[invNum], m_efac), false);
@@ -505,6 +505,7 @@ namespace ufo
           if (checkAllLemmas())
           {
             outs () << "Success after " << (i+1) << " iterations\n";
+            printSolution();
             return true;
           }
         }
@@ -942,6 +943,7 @@ namespace ufo
         if (checkAllLemmas())
         {
           outs () << "Success after bootstrapping\n";
+          printSolution();
           return true;
         }
       }
@@ -968,6 +970,7 @@ namespace ufo
               if (checkAllLemmas())
               {
                 outs () << "Success after bootstrapping\n";
+                printSolution();
                 return true;
               }
             }
@@ -1002,6 +1005,7 @@ namespace ufo
           if (checkAllLemmas())
           {
             outs () << "Success after bootstrapping\n";
+            printSolution();
             return true;
           }
         }
@@ -1127,6 +1131,24 @@ namespace ufo
           preconds[invNum] = a;
           break;
         }
+      }
+    }
+
+    void printSolution(bool simplify = true)
+    {
+      for (int i = 0; i < decls.size(); i++)
+      {
+        Expr rel = decls[i];
+        SamplFactory& sf = sfs[i].back();
+        ExprSet lms = sf.learnedExprs;
+        outs () << "(define-fun " << *rel << " (";
+        for (auto & b : ruleManager.invVars[rel])
+          outs () << "(" << *b << " " << u.varType(b) << ")";
+        outs () << ") Bool\n  ";
+        if (simplify) u.removeRedundantConjuncts(lms);
+        Expr res = simplifyArithm(conjoin(lms, m_efac));
+        u.print(res);
+        outs () << ")\n";
       }
     }
   };

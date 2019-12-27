@@ -800,6 +800,9 @@ namespace ufo
         case Z3_OP_REM:
           e = mknary<REM> (args.begin (), args.end ());
           break;
+        case Z3_OP_DISTINCT:
+          e = mknary<NEQ> (args.begin(), args.end());
+          break;
         case Z3_OP_CONST_ARRAY:
           {
             assert (args.size () == 1);

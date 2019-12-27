@@ -99,10 +99,15 @@ namespace ufo
     }
   }
 
+  inline static bool isNumeric(Expr a)
+  {
+    return bind::typeOf(a) == mk<INT_TY>(a->getFactory());
+  }
+
   inline static void getArrIneqs (Expr a, ExprSet &ineqs)
   {
     if (isOp<ComparissonOp>(a) && containsOp<SELECT>(a)){
-      if (isOpX<EQ>(a))
+      if (isOpX<EQ>(a) && isNumeric(a->left()))
       {
         ineqs.insert(mk<LEQ>(a->left(), a->right()));
         ineqs.insert(mk<GEQ>(a->left(), a->right()));
@@ -147,7 +152,7 @@ namespace ufo
       return mk<MULT>(multiplier, e);
     else return e;
   }
-  
+
   /**
    * Rewrites distributivity rule:
    * a*b + a*c -> a*(b + c)
@@ -225,11 +230,8 @@ namespace ufo
         return mk<MULT>(c, e->right());
       }
     }
-    else if (bind::isIntConst(e))
-      return mk<MULT>(mkTerm (mpz_class (-1), e->getFactory()), e);
 
-    // otherwise could be buggy...
-    return mk<MULT>(mkTerm (mpq_class (-1), e->getFactory()), e);
+    return mk<UN_MINUS>(e);
   }
   
   /**
@@ -631,7 +633,254 @@ namespace ufo
       
     }
   };
-  
+
+  inline static void getPlusTerms (Expr a, ExprVector &terms)
+  {
+    if (isOpX<PLUS>(a)){
+      for (unsigned i = 0; i < a->arity(); i++){
+        getPlusTerms(a->arg(i), terms);
+      }
+    }
+    else if (isOpX<MINUS>(a)){
+      // assume only two args
+      terms.push_back(a->left());
+      terms.push_back(additiveInverse(a->right()));
+    } else {
+      terms.push_back(a);
+    }
+  }
+
+    // not very pretty method, but..
+  inline static Expr reBuildCmp(Expr term, Expr lhs, Expr rhs)
+  {
+    if (isOpX<EQ>(term))
+    {
+      return mk<EQ>(lhs, rhs);
+    }
+    if (isOpX<NEQ>(term))
+    {
+      return mk<NEQ>(lhs, rhs);
+    }
+    if (isOpX<LEQ>(term))
+    {
+      return mk<LEQ>(lhs, rhs);
+    }
+    if (isOpX<GEQ>(term))
+    {
+      return mk<GEQ>(lhs, rhs);
+    }
+    if (isOpX<LT>(term))
+    {
+      return mk<LT>(lhs, rhs);
+    }
+    assert(isOpX<GT>(term));
+    return mk<GT>(lhs, rhs);
+  }
+
+  inline static Expr reBuildNegCmp(Expr term, Expr lhs, Expr rhs)
+  {
+    if (isOpX<EQ>(term))
+    {
+      return mk<NEQ>(lhs, rhs);
+    }
+    if (isOpX<NEQ>(term))
+    {
+      return mk<EQ>(lhs, rhs);
+    }
+    if (isOpX<LEQ>(term))
+    {
+      return mk<GT>(lhs, rhs);
+    }
+    if (isOpX<GEQ>(term))
+    {
+      return mk<LT>(lhs, rhs);
+    }
+    if (isOpX<LT>(term))
+    {
+      return mk<GEQ>(lhs, rhs);
+    }
+    assert(isOpX<GT>(term));
+    return mk<LEQ>(lhs, rhs);
+  }
+
+  // not very pretty method, but..
+  inline static bool evaluateCmpConsts(Expr term, int a, int b)
+  {
+    if (isOpX<EQ>(term))
+    {
+      return (a == b);
+    }
+    if (isOpX<NEQ>(term))
+    {
+      return (a != b);
+    }
+    if (isOpX<LEQ>(term))
+    {
+      return (a <= b);
+    }
+    if (isOpX<GEQ>(term))
+    {
+      return (a >= b);
+    }
+    if (isOpX<LT>(term))
+    {
+      return (a < b);
+    }
+    assert(isOpX<GT>(term));
+    return (a > b);
+  }
+
+  inline static Expr mkNeg(Expr term)
+  {
+    if (isOpX<NEG>(term))
+    {
+      return term->arg(0);
+    }
+    else if (isOpX<FALSE>(term))
+    {
+      return mk<TRUE>(term->getFactory());
+    }
+    else if (isOpX<TRUE>(term))
+    {
+      return mk<FALSE>(term->getFactory());
+    }
+    else if (isOpX<AND>(term) || isOpX<OR>(term))
+    {
+      ExprSet args;
+      for (int i = 0; i < term->arity(); i++){
+        args.insert(mkNeg(term->arg(i)));
+      }
+      return isOpX<AND>(term) ? disjoin(args, term->getFactory()) :
+      conjoin (args, term->getFactory());
+    }
+    else if (isOp<ComparissonOp>(term))
+    {
+      return reBuildNegCmp(term, term->arg(0), term->arg(1));
+    }
+    else if (isOpX<IMPL>(term))
+    {
+      return mk<AND>(term->left(), mkNeg(term->right()));
+    }
+    else if (isOpX<FORALL>(term))
+    {
+      return mkNeg(term->last());
+    }
+    return mk<NEG>(term);
+  }
+
+  inline static int separateConst(ExprVector& plsOps)
+  {
+    int c = 0;
+    for (auto it = plsOps.begin(); it != plsOps.end(); )
+    {
+      if (isOpX<MPZ>(*it))
+      {
+        c += lexical_cast<int>(*it);
+        it = plsOps.erase(it);
+        continue;
+      }
+      else ++it;
+    }
+    return c;
+  }
+
+  inline static Expr simplifyPlus (Expr exp){
+    ExprVector plsOps;
+    getPlusTerms (exp, plsOps);
+    // GF: to extend
+    int c = separateConst(plsOps);
+    if (c != 0) plsOps.push_back(mkTerm (mpz_class (c), exp->getFactory()));
+    return mkplus(plsOps, exp->getFactory());
+  }
+
+  static void getAddTerm (Expr a, ExprVector &terms); // declaration only
+
+  inline static Expr simplifyIte (Expr exp)  // simple version, on the syntactic level
+  {
+    ExprFactory &efac = exp->getFactory();
+    ExprVector plusOpsLeft;
+    ExprVector plusOpsRight;
+    getAddTerm(exp->right(), plusOpsLeft);
+    getAddTerm(exp->last(), plusOpsRight);
+
+    ExprVector commonTerms;
+    for (auto it1 = plusOpsLeft.begin(); it1 != plusOpsLeft.end(); )
+    {
+      bool found = false;
+      for (auto it2 = plusOpsRight.begin(); it2 != plusOpsRight.end(); )
+      {
+        if (*it1 == *it2)
+        {
+          if (lexical_cast<string>(*it1) != "0")
+            commonTerms.push_back(*it1);
+          found = true;
+          plusOpsRight.erase(it2);
+          break;
+        }
+        else
+        {
+          ++it2;
+        }
+      }
+      if (found) it1 = plusOpsLeft.erase(it1);
+      else ++it1;
+    }
+
+    Expr b1 = simplifyPlus(mkplus(plusOpsLeft, efac));
+    Expr b2 = simplifyPlus(mkplus(plusOpsRight, efac));
+    if (b1 == b2)
+    {
+      if (lexical_cast<string>(b1) != "0")
+        commonTerms.push_back(b1);
+    }
+    else
+    {
+      commonTerms.push_back(mk<ITE>(exp->left(), b1, b2));
+    }
+    return mkplus(commonTerms, efac);
+  }
+
+  inline static Expr simplifyCmp (Expr exp)
+  {
+    ExprFactory &efac = exp->getFactory();
+
+    ExprVector plusOpsLeft;
+    ExprVector plusOpsRight;
+    getPlusTerms(exp->left(), plusOpsLeft);
+    getPlusTerms(exp->right(), plusOpsRight);
+
+    int c1 = separateConst(plusOpsLeft);
+    int c2 = separateConst(plusOpsRight);
+
+    for (auto it1 = plusOpsLeft.begin(); it1 != plusOpsLeft.end(); )
+    {
+      bool found = false;
+      for (auto it2 = plusOpsRight.begin(); it2 != plusOpsRight.end(); )
+      {
+        if (*it1 == *it2)
+        {
+          found = true;
+          plusOpsRight.erase(it2);
+          break;
+        }
+        else
+        {
+          ++it2;
+        }
+      }
+      if (found) it1 = plusOpsLeft.erase(it1);
+      else ++it1;
+    }
+
+    if (c1 > c2)
+      plusOpsLeft.push_back(mkTerm (mpz_class (c1 - c2), efac));
+    else if (c1 < c2)
+      plusOpsRight.push_back(mkTerm (mpz_class (c2 - c1), efac));
+
+    return reBuildCmp(exp, mkplus(plusOpsLeft, efac), mkplus(plusOpsRight, efac));
+  }
+
+  // GF: to rewrite/remove
   inline static Expr simplifiedPlus (Expr exp, Expr to_skip){
     ExprVector args;
     Expr ret;
@@ -665,32 +914,32 @@ namespace ufo
     }
     return ret;
   }
-  
+
   // return a - b
   inline static Expr simplifiedMinus (Expr a, Expr b){
     Expr ret = mk<MINUS>(a, b);
-    
+
     if (a == b) {
       ret = mkTerm (mpz_class (0), a->getFactory());
     } else
-      
+
       if (isOpX<PLUS>(a)){
         return simplifiedPlus(a, b);
       } else
-        
+
         if (isOpX<PLUS>(b)){
           Expr res = simplifiedPlus(b, a);
           return mk<UN_MINUS>(res);
         } else
-          
+
           if (isOpX<MINUS>(a)){
             if (a->left() == b) ret = mk<UN_MINUS>(a->right());
           } else
-            
+
             if (isOpX<MINUS>(b)){
               if (a == b->right()) ret = mk<UN_MINUS>(b->left());
             } else
-              
+
               if (isOpX<UN_MINUS>(b)) {
                 if (b->left() == mkTerm (mpz_class (0), a->getFactory())) {
                   ret = a;
@@ -698,15 +947,15 @@ namespace ufo
                   ret = mk<PLUS>(a,b->left());
                 }
               } else
-                
+
                 if (mkTerm (mpz_class (-1), a->getFactory()) == b) {
                   ret = simplifiedPlus(a, mkTerm (mpz_class (1), a->getFactory()));
                 } else
-                  
+
                   if (b == mkTerm (mpz_class (0), a->getFactory())) {
                     ret = a;
                   } else
-                    
+
                     if (a == mkTerm (mpz_class (0), a->getFactory())){
                       if (isOpX<UN_MINUS>(b)){
                         ret = b->left();
@@ -715,48 +964,56 @@ namespace ufo
                         ret = mk<UN_MINUS>(b);
                       }
                     }
-    
+
     return ret;
   }
-  
+
   struct SimplifyArithmExpr
   {
     ExprFactory &efac;
-    
+
     Expr zero;
     Expr one;
     Expr minus_one;
-    
-    SimplifyArithmExpr (ExprFactory& _efac):
-    efac(_efac)
+
+    SimplifyArithmExpr (ExprFactory& _efac, bool isInt = true) : efac(_efac)
     {
-      zero = mkTerm (mpz_class (0), efac);
-      one = mkTerm (mpz_class (1), efac);
-      minus_one = mkTerm (mpz_class (1), efac);
+      if (isInt)
+      {
+        zero = mkTerm (mpz_class (0), efac);
+        one = mkTerm (mpz_class (1), efac);
+        minus_one = mkTerm (mpz_class (-1), efac);
+      }
+      else
+      {
+        zero = mkTerm (mpq_class (0), efac);
+        one = mkTerm (mpq_class (1), efac);
+        minus_one = mkTerm (mpq_class (-1), efac);
+      }
     };
-    
+
     Expr operator() (Expr exp)
     {
       if (isOpX<PLUS>(exp))
       {
-        return simplifiedPlus(exp, zero);
+        return simplifyPlus(exp);
       }
-      
+
       if (isOpX<MINUS>(exp) && exp->arity() == 2)
       {
         return simplifiedMinus(exp->left(), exp->right());
       }
-      
+
       if (isOpX<MULT>(exp))
       {
         if (exp->left() == zero) return zero;
         if (exp->right() == zero) return zero;
         if (exp->left() == one) return exp->right();
         if (exp->right() == one) return exp->left();
-        if (exp->left() == minus_one) return mk<UN_MINUS>(exp->right());
-        if (exp->right() == minus_one) return mk<UN_MINUS>(exp->left());
+        if (exp->left() == minus_one) return additiveInverse(exp->right());
+        if (exp->right() == minus_one) return additiveInverse(exp->left());
       }
-      
+
       if (isOpX<UN_MINUS>(exp))
       {
         Expr uneg = exp->left();
@@ -770,10 +1027,20 @@ namespace ufo
           if (isOpX<UN_MINUS>(unegr)) return mk<MINUS>(unegr->left(), unegl);
         }
       }
-      
+
       if (isOpX<MINUS>(exp))
       {
         if (isOpX<UN_MINUS>(exp->right())) return mk<PLUS>(exp->left(), exp->right()->left());
+      }
+
+      if (isOp<ComparissonOp>(exp) && isNumeric(exp->right()))
+      {
+        return simplifyCmp(exp);
+      }
+
+      if (isOpX<ITE>(exp) && isNumeric(exp->right()))
+      {
+        return simplifyIte(exp);
       }
       return exp;
     }
@@ -856,6 +1123,35 @@ namespace ufo
         }
         return conjoin (newCnjs, efac);
       }
+
+      if (isOpX<ITE>(exp)){
+        Expr cond = exp->arg(0);
+        if (isOpX<TRUE>(cond))
+        {
+          return exp->arg(1);
+        }
+        else if (isOpX<FALSE>(cond))
+        {
+          return exp->arg(2);
+        }
+        else if (isOpX<TRUE>(exp->arg(1)) && isOpX<FALSE>(exp->arg(2)))
+        {
+          return cond;
+        }
+        else if (isOpX<FALSE>(exp->arg(1)) && isOpX<TRUE>(exp->arg(2)))
+        {
+          return mkNeg(cond);
+        }
+        else if (exp->arg(1) == exp->arg(2))
+        {
+          return exp->arg(1);
+        }
+      }
+
+      if (isOpX<NEG>(exp) &&
+          (isOp<ComparissonOp>(exp->left()) ||
+           isOpX<TRUE>(exp->left()) || isOpX<FALSE>(exp->left())))
+        return mkNeg(exp->left());
 
       return exp;
     }
@@ -1024,7 +1320,7 @@ namespace ufo
   {
     return isOpX<MPZ>(e) || isOpX<MPQ>(e);
   }
-  
+
   template<typename Range> static int getVarIndex(Expr var, Range& vec)
   {
     int i = 0;
@@ -1035,8 +1331,6 @@ namespace ufo
     }
     return -1;
   }
-  
-  static void getAddTerm (Expr a, ExprVector &terms); // declaration only
   
   inline static Expr arithmInverse(Expr e)
   {
@@ -1414,116 +1708,6 @@ namespace ufo
     else return NULL;
   }
 
-  // not very pretty method, but..
-  inline static Expr reBuildCmp(Expr term, Expr lhs, Expr rhs)
-  {
-    if (isOpX<EQ>(term))
-    {
-      return mk<EQ>(lhs, rhs);
-    }
-    if (isOpX<NEQ>(term))
-    {
-      return mk<NEQ>(lhs, rhs);
-    }
-    if (isOpX<LEQ>(term))
-    {
-      return mk<LEQ>(lhs, rhs);
-    }
-    if (isOpX<GEQ>(term))
-    {
-      return mk<GEQ>(lhs, rhs);
-    }
-    if (isOpX<LT>(term))
-    {
-      return mk<LT>(lhs, rhs);
-    }
-    assert(isOpX<GT>(term));
-    return mk<GT>(lhs, rhs);
-  }
-  
-  inline static Expr reBuildNegCmp(Expr term, Expr lhs, Expr rhs)
-  {
-    if (isOpX<EQ>(term))
-    {
-      return mk<NEQ>(lhs, rhs);
-    }
-    if (isOpX<NEQ>(term))
-    {
-      return mk<EQ>(lhs, rhs);
-    }
-    if (isOpX<LEQ>(term))
-    {
-      return mk<GT>(lhs, rhs);
-    }
-    if (isOpX<GEQ>(term))
-    {
-      return mk<LT>(lhs, rhs);
-    }
-    if (isOpX<LT>(term))
-    {
-      return mk<GEQ>(lhs, rhs);
-    }
-    assert(isOpX<GT>(term));
-    return mk<LEQ>(lhs, rhs);
-  }
-  
-  // not very pretty method, but..
-  inline static bool evaluateCmpConsts(Expr term, int a, int b)
-  {
-    if (isOpX<EQ>(term))
-    {
-      return (a == b);
-    }
-    if (isOpX<NEQ>(term))
-    {
-      return (a != b);
-    }
-    if (isOpX<LEQ>(term))
-    {
-      return (a <= b);
-    }
-    if (isOpX<GEQ>(term))
-    {
-      return (a >= b);
-    }
-    if (isOpX<LT>(term))
-    {
-      return (a < b);
-    }
-    assert(isOpX<GT>(term));
-    return (a > b);
-  }
-  
-  inline static Expr mkNeg(Expr term)
-  {
-    if (isOpX<NEG>(term))
-    {
-      return term->arg(0);
-    }
-    else if (isOpX<AND>(term) || isOpX<OR>(term))
-    {
-      ExprSet args;
-      for (int i = 0; i < term->arity(); i++){
-        args.insert(mkNeg(term->arg(i)));
-      }
-      return isOpX<AND>(term) ? disjoin(args, term->getFactory()) :
-                                conjoin (args, term->getFactory());
-    }
-    else if (isOp<ComparissonOp>(term))
-    {
-      return reBuildNegCmp(term, term->arg(0), term->arg(1));
-    }
-    else if (isOpX<IMPL>(term))
-    {
-      return mk<AND>(term->left(), mkNeg(term->right()));
-    }
-    else if (isOpX<FORALL>(term))
-    {
-      return mkNeg(term->last());
-    }
-    return mk<NEG>(term);
-  }
-
   inline static bool hasBoolSort(Expr e)
   {
     if (bind::isBoolConst(e) || isOp<BoolOp>(e)) return true;
@@ -1538,22 +1722,24 @@ namespace ufo
 
     if (isOpX<EQ>(term))
     {
-      if (hasBoolSort(term->left()))
-        mk<OR>(mk<AND>(term->left(), term->right()),
-               mk<AND>(mkNeg(term->left()), mkNeg(term->right())));
-      else return mk<AND>(
-                       mk<GEQ>(term->left(), term->right()),
-                       mk<GEQ>(term->right(), term->left()));
+      if (hasBoolSort(term->left())) return
+          mk<OR>(mk<AND>(term->left(), term->right()),
+                 mk<AND>(mkNeg(term->left()), mkNeg(term->right())));
+      else if (isNumeric(term->left())) return mk<AND>(
+          mk<GEQ>(term->left(), term->right()),
+          mk<GEQ>(term->right(), term->left()));
+      else return term;
     }
 
     if (isOpX<NEQ>(term))
     {
-      if (hasBoolSort(term->left()))
-        return mk<OR>(mk<AND>(term->left(), mkNeg(term->right())),
-                      mk<AND>(mkNeg(term->left()), term->right()));
-      else return mk<OR>(
-                         mk<GT>(term->left(), term->right()),
-                         mk<GT>(term->right(), term->left()));
+      if (hasBoolSort(term->left())) return
+          mk<OR>(mk<AND>(term->left(), mkNeg(term->right())),
+                 mk<AND>(mkNeg(term->left()), term->right()));
+      else if (isNumeric(term->left())) return mk<OR>(
+          mk<GT>(term->left(), term->right()),
+          mk<GT>(term->right(), term->left()));
+      else return term;
     }
 
     if (isOpX<NEG>(term))
@@ -1569,7 +1755,7 @@ namespace ufo
       }
 
       return isOpX<AND>(term) ? conjoin (args, term->getFactory()) :
-      disjoin (args, term->getFactory());
+        disjoin (args, term->getFactory());
 
     }
     return term;
@@ -1609,6 +1795,57 @@ namespace ufo
     for (auto & ev : exprvec)
       retExpr = replaceAll(retExpr, ev, mk<STORE>(ev, itr, val));
     return retExpr;
+  }
+
+  struct ITElifter
+  {
+    ITElifter () {};
+
+    Expr operator() (Expr exp)
+    {
+      // currently, can lift only one ITE
+      if (isOpX<FAPP>(exp) || isOp<ComparissonOp>(exp))
+      {
+        ExprVector vars1;
+        ExprVector vars2;
+        Expr cond = NULL;
+        int i = 0;
+        if (isOpX<FAPP>(exp))
+        {
+          vars1.push_back(exp->arg(0));
+          vars2.push_back(exp->arg(0));
+          i = 1;
+        }
+        for (; i < exp->arity(); i++)
+        {
+          if (isOpX<ITE>(exp->arg(i)) && cond == NULL)
+          {
+            cond = exp->arg(i)->arg(0);
+            vars1.push_back(exp->arg(i)->arg(1));
+            vars2.push_back(exp->arg(i)->arg(2));
+          }
+          else
+          {
+            vars1.push_back(exp->arg(i));
+            vars2.push_back(exp->arg(i));
+          }
+        }
+        if (cond == NULL) return exp;
+
+        if (isOpX<FAPP>(exp))
+          return mk<ITE>(cond, mknary<FAPP>(vars1), mknary<FAPP>(vars2));
+        else
+        // isOp<ComparissonOp>(exp) here; thus vars1.size() == vars2.size() == 2
+          return mk<ITE>(cond, reBuildCmp(exp, vars1[0], vars1[1]), reBuildCmp(exp, vars2[0], vars2[1]));
+      }
+      return exp;
+    }
+  };
+
+  inline static Expr liftITEs (Expr exp)
+  {
+    RW<ITElifter> rw(new ITElifter());
+    return dagVisit (rw, exp);
   }
 
   inline static Expr unfoldITE(Expr term)
@@ -1896,6 +2133,8 @@ namespace ufo
     }
   };
 
+  inline static Expr rewriteSelectStore(Expr exp);
+
   struct SelectStoreRewriter
   {
     SelectStoreRewriter () {};
@@ -1910,9 +2149,47 @@ namespace ufo
           return mk<ITE>(mk<EQ>(exp->right(), exp->left()->right()),
              exp->left()->last(), mk<SELECT>(exp->left()->left(), exp->right()));
       }
+      if (isOpX<EQ>(exp) && isOpX<STORE>(exp->right()))
+      {
+        ExprSet tmp;
+        tmp.insert(rewriteSelectStore(mk<EQ>(exp->left(), exp->right()->left())));
+        tmp.insert(mk<EQ>(exp->right()->last(), mk<SELECT>(exp->left(), exp->right()->right())));
+        return conjoin (tmp, exp->getFactory());
+      }
+      if (isOpX<EQ>(exp) && isOpX<STORE>(exp->left()))
+      {
+        ExprSet tmp;
+        tmp.insert(rewriteSelectStore(mk<EQ>(exp->right(), exp->left()->left())));
+        tmp.insert(mk<EQ>(exp->left()->last(), mk<SELECT>(exp->right(), exp->left()->right())));
+        return conjoin (tmp, exp->getFactory());
+      }
       return exp;
     }
   };
+
+  struct SelectReplacer : public std::unary_function<Expr, VisitAction>
+  {
+    ExprMap& sels;
+    SelectReplacer (ExprMap& _sels) :  sels(_sels) {};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<SELECT>(exp))
+      {
+        if (sels[exp] != NULL) return sels[exp];
+        Expr repl = bind::intConst(mkTerm<string> ("sel_" + lexical_cast<string>(sels.size()), exp->getFactory()));
+        sels[exp] = repl;
+        return repl;
+      }
+      return exp;
+    }
+  };
+
+  inline static Expr replaceSelects(Expr exp, ExprMap& sels)
+  {
+    RW<SelectReplacer> a(new SelectReplacer(sels));
+    return dagVisit (a, exp);
+  }
 
   struct QuantifiedVarsFilter : public std::unary_function<Expr, VisitAction>
   {
@@ -2013,21 +2290,21 @@ namespace ufo
 
     newCnjs.clear();
     getConj(qed, newCnjs);
+    if (strict)
+    {
+      for (auto it = newCnjs.begin(); it != newCnjs.end(); )
+      if (emptyIntersect(*it, quantified)) ++it;
+      else it = newCnjs.erase(it);
+      return conjoin(newCnjs, exp->getFactory());
+    }
+
     for (auto & a : eqs)
     {
       if (find(used.begin(), used.end(), a.first) == used.end())
         newCnjs.insert(mk<EQ>(a.first, a.second));
     }
     qed = conjoin(newCnjs, exp->getFactory());
-    if (!strict) return qed;
-
-    // check if there are some not eliminated vars
-    ExprVector av;
-    filter (qed, bind::IsConst (), inserter(av, av.begin()));
-    if (emptyIntersect(av, quantified)) return qed;
-
-    // otherwise result is incomplete
-    return mk<TRUE>(exp->getFactory());
+    return qed;
   }
 
   struct QESubexpr
@@ -2643,10 +2920,25 @@ namespace ufo
 
     VisitAction operator() (Expr exp)
     {
-      if (isOpX<ITE>(exp))
+      if (isOpX<ITE>(exp) && !containsOp<ITE>(exp->arg(0)))
       {
         conds.insert(exp->arg(0));
-        return VisitAction::skipKids ();
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
+  struct AccessRetriever : public std::unary_function<Expr, VisitAction>
+  {
+    ExprSet& accs;
+
+    AccessRetriever (ExprSet& _accs) :  accs(_accs) {};
+
+    VisitAction operator() (Expr exp)
+    {
+      if ((isOpX<SELECT>(exp) || isOpX<STORE>(exp)) && !findArray(exp->right()))
+      {
+        accs.insert(exp->right());
       }
       return VisitAction::doKids ();
     }
@@ -2714,6 +3006,12 @@ namespace ufo
   inline void retrieveConds (Expr exp, ExprSet& conds)
   {
     CondRetriever dr (conds);
+    dagVisit (dr, exp);
+  }
+
+  inline void retrieveAccFuns (Expr exp, ExprSet& accs)
+  {
+    AccessRetriever dr (accs);
     dagVisit (dr, exp);
   }
 
@@ -2905,7 +3203,7 @@ namespace ufo
           bool eq1 = (repl1 == neg);
           bool eq2 = (repl2 == neg);
           bool eq3 = (repl2 == repl1);
-          
+
           if (eq1 && eq2 && eq3) cnjs.insert(a);
           else if (eq1) cnjs.insert (mk<NEG> (mk<AND>(neg, repl2)));
           else if (eq2) cnjs.insert (mk<NEG> (mk<AND>(neg, repl1)));
@@ -2974,11 +3272,60 @@ namespace ufo
     return res;
   }
 
-  inline static bool isNumeric(Expr a)
+  struct QVMiner : public std::unary_function<Expr, VisitAction>
   {
-    // don't consider ITE-s
-    return (isOp<NumericOp>(a) || isOpX<MPZ>(a) ||
-            isOpX<MPQ>(a) || bind::isIntConst(a) || isOpX<SELECT>(a));
+    map<Expr, ExprVector>& vars;
+    QVMiner (map<Expr, ExprVector>& _vars): vars(_vars) {};
+
+    VisitAction operator() (Expr exp)
+    {
+      if (isOpX<FORALL>(exp) || isOpX<EXISTS>(exp))
+      {
+        for (int i = 0; i < exp->arity() - 1; i++)
+          vars[exp].push_back(bind::fapp(exp->arg(i)));
+
+        reverse(vars[exp].begin(),vars[exp].end());
+
+        for (auto & a : vars)
+          if (contains(a.first, exp) && a.first != exp)
+            vars[exp].insert(vars[exp].end(), a.second.begin(), a.second.end());
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
+  inline void getQVars (Expr exp, map<Expr, ExprVector>& vars)
+  {
+    QVMiner qvm (vars);
+    dagVisit (qvm, exp);
+  }
+
+  struct QFregularizer
+  {
+    ExprVector& vars;
+    QFregularizer (ExprVector& _vars): vars(_vars){};
+    Expr operator() (Expr exp)
+    {
+      if (bind::isBVar(exp)) return vars[bind::bvarId(exp)];
+      return exp;
+    }
+  };
+
+  inline static Expr regularizeQF (Expr exp)
+  {
+    map<Expr, ExprVector> vars;
+    getQVars(exp, vars);
+    ExprMap replaced;
+    for (auto & a : vars)
+    {
+      Expr sub = replaceAll(a.first, replaced);
+      RW<QFregularizer> rw(new QFregularizer(a.second));
+      Expr b = dagVisit (rw, sub);
+      replaced[a.first] = b;
+      exp = replaceAll(exp, sub, b);
+    }
+
+    return exp;
   }
 
   inline static bool evalLeq(Expr a, Expr b)

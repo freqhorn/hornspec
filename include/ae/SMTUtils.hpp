@@ -70,6 +70,10 @@ namespace ufo
           }
           smt.assertForallExpr(varz, c->last());
         }
+        else if (isOpX<EXISTS>(c))
+        {
+          smt.assertExpr(c->last());
+        }
         else
         {
           if (containsOp<FORALL>(c)) return logic::indeterminate;
@@ -131,6 +135,7 @@ namespace ufo
      */
     bool isFalse(Expr a){
       if (isOpX<FALSE>(a)) return true;
+      if (isOpX<NEQ>(a) && a->left() == a->right()) return true;
       return !isSat(a);
     }
 
@@ -155,24 +160,19 @@ namespace ufo
      */
     Expr simplifyITE(Expr ex, Expr upLevelCond)
     {
-      ex = replaceAll(ex, upLevelCond, mk<TRUE>(efac));
-      
       if (isOpX<ITE>(ex)){
-        
+
         Expr cond = ex->arg(0);
         Expr br1 = ex->arg(1);
         Expr br2 = ex->arg(2);
-        
-        Expr updCond1 = mk<AND>(upLevelCond, mk<NEG>(cond));
-        Expr updCond2 = mk<AND>(mk<NEG>(upLevelCond), cond);
-        
-        if (!isSat(updCond1)) return br1;
-        
-        if (!isSat(updCond2)) return br2;
-        
+
+        if (!isSat(cond, upLevelCond)) return br2;
+
+        if (!isSat(mk<NEG>(cond), upLevelCond)) return br1;
+
         return mk<ITE>(cond,
-                       simplifyITE(br1, updCond1),
-                       simplifyITE(br2, updCond2));
+                       simplifyITE(br1, mk<AND>(upLevelCond, cond)),
+                       simplifyITE(br2, mk<AND>(upLevelCond, mk<NEG>(cond))));
       } else {
         return ex;
       }
@@ -184,29 +184,29 @@ namespace ufo
     Expr simplifyITE(Expr ex)
     {
       if (isOpX<ITE>(ex)){
-        
+
         Expr cond = simplifyITE(ex->arg(0));
         Expr br1 = ex->arg(1);
         Expr br2 = ex->arg(2);
-        
+
         if (isOpX<TRUE>(cond)) return br1;
         if (isOpX<FALSE>(cond)) return br2;
-        
+
         if (br1 == br2) return br1;
-        
+
         if (isOpX<TRUE>(br1) && isOpX<FALSE>(br2)) return cond;
-        
+
         if (isOpX<FALSE>(br1) && isOpX<TRUE>(br2)) return mk<NEG>(cond);
-        
+
         return mk<ITE>(cond,
                        simplifyITE(br1, cond),
                        simplifyITE(br2, mk<NEG>(cond)));
-        
+
       } else if (isOpX<IMPL>(ex)) {
-        
+
         return mk<IMPL>(simplifyITE(ex->left()), simplifyITE(ex->right()));
       } else if (isOpX<AND>(ex) || isOpX<OR>(ex)){
-        
+
         ExprSet args;
         for (auto it = ex->args_begin(), end = ex->args_end(); it != end; ++it){
           args.insert(simplifyITE(*it));
@@ -325,13 +325,107 @@ namespace ufo
       return exp;
     }
 
+    inline static string varType (Expr var)
+    {
+      if (bind::isIntConst(var))
+        return "Int";
+      else if (bind::isRealConst(var))
+        return "Real";
+      else if (bind::isBoolConst(var))
+        return "Bool";
+      else if (bind::isConst<ARRAY_TY> (var))
+      {
+        Expr name = mkTerm<string> ("", var->getFactory());
+        Expr s1 = bind::mkConst(name, var->last()->right()->left());
+        Expr s2 = bind::mkConst(name, var->last()->right()->right());
+        return string("(Array ") + varType(s1) + string(" ") + varType(s2) + string(")");
+      }
+      else return "";
+    }
+
+    void print (Expr e)
+    {
+      if (isOpX<FORALL>(e) || isOpX<EXISTS>(e))
+      {
+        if (isOpX<FORALL>(e)) outs () << "(forall (";
+        else outs () << "(exists (";
+
+        for (int i = 0; i < e->arity() - 1; i++)
+        {
+          Expr var = bind::fapp(e->arg(i));
+          outs () << "(" << *var << " " << varType(var) << ")";
+          if (i != e->arity() - 2) outs () << " ";
+        }
+        outs () << ") ";
+        print (e->last());
+        outs () << ")";
+      }
+      else if (isOpX<AND>(e))
+      {
+        outs () << "(and ";
+        ExprSet cnjs;
+        getConj(e, cnjs);
+        int i = 0;
+        for (auto & c : cnjs)
+        {
+          i++;
+          print(c);
+          if (i != cnjs.size()) outs () << " ";
+        }
+        outs () << ")";
+      }
+      else if (isOpX<OR>(e))
+      {
+        outs () << "(or ";
+        ExprSet dsjs;
+        getDisj(e, dsjs);
+        int i = 0;
+        for (auto & d : dsjs)
+        {
+          i++;
+          print(d);
+          if (i != dsjs.size()) outs () << " ";
+        }
+        outs () << ")";
+      }
+      else if (isOpX<IMPL>(e) || isOp<ComparissonOp>(e))
+      {
+        if (isOpX<IMPL>(e)) outs () << "(=> ";
+        if (isOpX<EQ>(e)) outs () << "(= ";
+        if (isOpX<GEQ>(e)) outs () << "(>= ";
+        if (isOpX<LEQ>(e)) outs () << "(<= ";
+        if (isOpX<LT>(e)) outs () << "(< ";
+        if (isOpX<GT>(e)) outs () << "(> ";
+        if (isOpX<NEQ>(e)) outs () << "(distinct ";
+        print(e->left());
+        outs () << " ";
+        print(e->right());
+        outs () << ")";
+      }
+      else if (isOpX<ITE>(e))
+      {
+        outs () << "(ite ";
+        print(e->left());
+        outs () << " ";
+        print(e->right());
+        outs () << " ";
+        print(e->last());
+        outs () << ")";
+      }
+      else outs () << z3.toSmtLib (e);
+    }
+
     void serialize_formula(Expr form)
     {
-      smt.reset();
-      smt.assertExpr(form);
+      outs () << "(assert ";
+      print (form);
+      outs () << ")\n";
 
-      smt.toSmtLib (outs());
-      outs().flush ();
+      // old version (to  merge, maybe?)
+//      smt.reset();
+//      smt.assertExpr(form);
+//      smt.toSmtLib (outs());
+//      outs().flush ();
     }
 
     template <typename Range> bool splitUnsatSets(Range & src, ExprVector & dst1, ExprVector & dst2)
