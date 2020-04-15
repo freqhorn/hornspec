@@ -37,6 +37,7 @@ namespace ufo
     int varCnt = 0;
     ExprVector ssaSteps;
     map<Expr, ExprSet> candidates;
+    bool hasArrays = false;
 
     public:
 
@@ -96,7 +97,7 @@ namespace ufo
       return !u.isSat(checkList);
     }
 
-    void preproGuessing(Expr e, ExprVector& ev1, ExprVector& ev2, ExprSet& guesses)
+    void preproGuessing(Expr e, ExprVector& ev1, ExprVector& ev2, ExprSet& guesses, bool backward = false, bool mutate = true)
     {
       ExprSet ev3;
       filter (e, bind::IsConst (), inserter (ev3, ev3.begin())); // prepare vars
@@ -106,6 +107,7 @@ namespace ufo
         else it = ev3.erase(it);
       }
       e = quantifierElimination(e, ev3);
+      if (backward) e = mkNeg(e);
 
       ExprSet cnjs;
 
@@ -132,7 +134,15 @@ namespace ufo
           if (newDsjs.size() > 0) e = replaceAll(e, c2, disjoin(newDsjs, m_efac));
         }
       }
-      mutateHeuristic(replaceAll(e, ev1, ev2), guesses);
+      if (!ev2.empty())
+        e = replaceAll(e, ev1, ev2); // rename variables only if ev2 is nonempty
+      if (mutate)
+        mutateHeuristic(e, guesses);
+      else
+      {
+        e = simplifyBool(e);
+        getConj(e, guesses);
+      }
     }
 
     void bootstrapping()
@@ -141,7 +151,11 @@ namespace ufo
       {
         if (hr.isQuery)
         {
-          if (!containsOp<ARRAY_TY>(hr.body))
+          if (containsOp<ARRAY_TY>(hr.body))
+          {
+            hasArrays = true;
+          }
+          else
           {
             for (int i = 0; i < hr.srcVars.size(); i++)
             {
@@ -182,7 +196,184 @@ namespace ufo
 
     void propagateCandidatesBackward()
     {
-      // TODO
+      if (hasArrays) return; // something is wrong, currently
+
+      for (auto & hr : ruleManager.chcs)
+      {
+        if (hr.isFact || hr.isInductive) continue;
+
+        Expr dstRel = hr.dstRelation;
+        ExprVector& rels = hr.srcRelations;
+
+        ExprVector invVars;
+        ExprVector srcVars;
+
+        // identifying nonlinear cases (i.e., when size(occursNum[...]) > 1)
+        map<Expr, set<int>> occursNum;
+        for (int i = 0; i < rels.size(); i++)
+        {
+          occursNum[rels[i]].insert(i);
+          for (int j = i+1; j < rels.size(); j++)
+            if (rels[i] == rels[j])
+              occursNum[rels[i]].insert(j);
+        }
+
+        for (int i = 0; i < hr.srcVars.size(); i++)
+          srcVars.insert(srcVars.end(), hr.srcVars[i].begin(), hr.srcVars[i].end());
+
+        if (hr.srcVars.size() == 1) invVars = ruleManager.invVars[rels[0]];
+
+        ExprSet cands;
+        if (hr.isQuery) cands.insert(mk<FALSE>(m_efac));
+        else cands = candidates[dstRel];
+
+        ExprSet mixedCands;
+        for (auto & c : cands)
+        {
+          ExprSet all;
+          all.insert(hr.body);
+          all.insert(mkNeg(replaceAll(c, ruleManager.invVars[dstRel], hr.dstVars)));
+          preproGuessing(conjoin(all, m_efac), srcVars, invVars, mixedCands, true, true);
+        }
+
+        if (hr.srcVars.size() == 1)
+          candidates[rels[0]].insert(mixedCands.begin(), mixedCands.end());
+        else
+        {
+          // decomposition here
+
+          for (auto & a : mixedCands)
+          {
+            ExprSet processed, allGuesses;
+
+            for (auto & r : rels)
+            {
+              if (!u.isSat(a)) return;  // need to recheck because the solver has been reset
+              if (processed.find(r) != processed.end()) continue;
+
+              invVars.clear();
+              ExprSet backGuesses, allVarsExcept;
+              ExprVector vars;
+              for (int j = 0; j < rels.size(); j++)
+              {
+                Expr t = rels[j];
+                if (processed.find(t) != processed.end()) continue;
+                if (t == r)
+                {
+                  vars.insert(vars.begin(), hr.srcVars[j].begin(), hr.srcVars[j].end());
+                  if (occursNum[r].size() == 1) invVars = ruleManager.invVars[rels[j]];
+                }
+                else
+                  allVarsExcept.insert(hr.srcVars[j].begin(), hr.srcVars[j].end());
+              }
+
+              // model-based cartesian decomposition
+              ExprSet all = allGuesses;
+              all.insert(mkNeg(a));
+              all.insert(u.getModel(allVarsExcept));
+
+              // in the case of nonlin, invVars is empty, so no renaming happens:
+              preproGuessing(conjoin(all, m_efac), vars, invVars, backGuesses, true, false);
+
+              if (occursNum[r].size() == 1)
+              {
+                candidates[r].insert(backGuesses.begin(), backGuesses.end());
+                allGuesses.insert(backGuesses.begin(), backGuesses.end());
+              }
+              else
+              {
+                // nonlinear case; proceed to isomorphic decomposition for each candidate
+
+                map<int, ExprVector> multiabdVars;
+
+                for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
+                  for (auto & v : ruleManager.invVars[r])
+                    multiabdVars[*it2].push_back(
+                      cloneVar(v, mkTerm<string> (
+                        "__multiabd_var" + lexical_cast<string>(*v) + "_" + to_string(*it2), m_efac)));
+
+                for (auto & b : backGuesses)
+                {
+                  ExprSet sol;
+                  int iter = 0;
+                  while (++iter < 10 /*hardcode*/)
+                  {
+                    // preps for obtaining a new model
+
+                    ExprSet cnj;
+                    for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
+                    {
+                      ExprSet dsj;
+                      if (!sol.empty())
+                        dsj.insert(replaceAll(conjoin(sol, m_efac), ruleManager.invVars[r], hr.srcVars[*it2]));
+                      for (auto it3 = occursNum[r].begin(); it3 != occursNum[r].end(); ++it3)
+                      {
+                        ExprSet modelCnj;
+                        for (int i = 0; i < ruleManager.invVars[r].size(); i++)
+                          modelCnj.insert(mk<EQ>(hr.srcVars[*it2][i], multiabdVars[*it3][i]));
+                        dsj.insert(conjoin(modelCnj, m_efac));
+                      }
+                      cnj.insert(disjoin(dsj, m_efac));
+                    }
+
+                    // obtaining a new model
+                    ExprVector args;
+                    for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
+                      for (auto & v : hr.srcVars[*it2])
+                        args.push_back(v->left());
+                    args.push_back(mk<IMPL>(conjoin(cnj, m_efac), b));
+
+                    ExprSet negModels;
+                    for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
+                      negModels.insert(mkNeg(replaceAll(conjoin(sol, m_efac), ruleManager.invVars[r], multiabdVars[*it2])));
+
+                    if (!u.isSat(mknary<FORALL>(args), sol.empty() ? mk<TRUE>(m_efac) : disjoin(negModels, m_efac)))
+                    {
+                      candidates[r].insert(sol.begin(), sol.end());
+                      for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
+                        allGuesses.insert(replaceAll(conjoin(sol, m_efac), ruleManager.invVars[r], hr.srcVars[*it2]));
+                      break;
+                    }
+                    else
+                    {
+                      ExprSet models;
+                      for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
+                      {
+                        ExprSet elements;
+                        for (int i = 0; i < ruleManager.invVars[r].size(); i++)
+                          elements.insert(mk<EQ>(ruleManager.invVars[r][i], u.getModel(multiabdVars[*it2][i])));
+                        models.insert(conjoin(elements, m_efac));
+                      }
+                      sol.insert (disjoin(models, m_efac)); // weakening sol by a new model
+                    }
+
+                    // heuristic to accelerate convergence
+                    ExprVector chk;
+                    for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
+                      chk.push_back(replaceAll(disjoin(sol, m_efac), ruleManager.invVars[r], hr.srcVars[*it2]));
+                    sol.clear();
+                    for (auto it1 = occursNum[r].begin(); it1 != occursNum[r].end(); ++it1)
+                    {
+                      int cnt = 0;
+                      for (auto it3 = occursNum[r].begin(); it3 != it1; ++it3, ++cnt)
+                        chk[cnt] = replaceAll(conjoin(sol, m_efac), ruleManager.invVars[r], hr.srcVars[*it3]);
+                      chk[cnt] = mk<TRUE>(m_efac);
+
+                      ExprSet allNonlin;
+                      allNonlin.insert(mkNeg(b));
+                      allNonlin.insert(conjoin(chk, m_efac));
+                      preproGuessing(conjoin(allNonlin, m_efac), hr.srcVars[*it1], ruleManager.invVars[r], sol, true, false);
+                    }
+                    u.removeRedundantConjuncts(sol);
+                  }
+                }
+              }
+              processed.insert(r);
+            }
+//            outs () << "sanity check: " << u.implies(conjoin(allGuesses, m_efac), a) << "\n";
+          }
+        }
+      }
     }
 
     void getImplicationGuesses(map<Expr, ExprSet>& postconds)
@@ -352,11 +543,15 @@ namespace ufo
       Expr iterator;
       Expr qVar = bind::intConst(mkTerm<string> ("_FH_arr_it", m_efac));
       Expr range;
-      HornRuleExt *hr;
+      HornRuleExt *hr = 0;
+      HornRuleExt *qr = 0;
 
       // preprocessing
       for (auto & a : ruleManager.chcs)
       {
+        if (a.isQuery && a.srcRelations[0] == tgt /*hack for now*/ &&
+            (containsOp<SELECT>(a.body) || containsOp<STORE>(a.body)))
+          qr = &a;
         if (a.isInductive && a.dstRelation == tgt &&
             (containsOp<SELECT>(a.body) || containsOp<STORE>(a.body)))
         {
@@ -485,6 +680,33 @@ namespace ufo
           }
         }
       }
+
+      if (qr == 0) return;
+
+      tmp.clear();
+      getArrIneqs(mkNeg(qr->body), tmp);
+
+      for (auto s : tmp)
+      {
+        ExprSet allv;
+        filter (s, bind::IsConst (), inserter (allv, allv.begin()));
+        for (auto & a : allv)
+          if (bind::typeOf(a) == bind::typeOf(qVar) && find(hr->srcVars[0].begin(), hr->srcVars[0].end(), a) ==
+              hr->srcVars[0].end()) s = replaceAll(s, a, qVar);
+
+        ExprVector args;
+        args.push_back(qVar->left());
+        args.push_back(mk<IMPL>(range, s));
+        Expr newGuess = mknary<FORALL>(args);
+
+        ExprSet chk;
+        chk.insert(replaceAll(newGuess, ruleManager.invVars[tgt], qr->srcVars[0]));
+        chk.insert(hr->body);
+        chk.insert(candidates[tgt].begin(), candidates[tgt].end());
+        // simple invariant check (for speed, need to be enhanced)
+        if (u.implies (conjoin(chk, m_efac), replaceAll(newGuess, ruleManager.invVars[tgt], hr->dstVars)))
+          candidates[tgt].insert(newGuess);
+      }
     }
 
     // very restricted version of FreqHorn (no grammars, limited use of arrays)
@@ -496,6 +718,9 @@ namespace ufo
       filterUnsat();
 
       propagateCandidatesForward();
+      filterUnsat();
+      propagateCandidatesBackward();
+      filterUnsat();
 
       vector<HornRuleExt*> worklist;
       for (auto & hr : ruleManager.chcs) worklist.push_back(&hr); // todo: wto
