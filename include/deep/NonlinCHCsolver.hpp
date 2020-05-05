@@ -38,6 +38,8 @@ namespace ufo
     ExprVector ssaSteps;
     map<Expr, ExprSet> candidates;
     bool hasArrays = false;
+    ExprSet declsVisited;
+    map<HornRuleExt*, vector<ExprVector>> abdHistory;
 
     public:
 
@@ -45,7 +47,7 @@ namespace ufo
 
     Expr quantifierElimination(Expr& cond, ExprSet& vars)
     {
-      if (vars.size() == 0) return cond;
+      if (vars.size() == 0) return simplifyBool(cond);
       Expr newCond;
       if (isNonlinear(cond)) {
         newCond = simpleQE(cond, vars, true, true);
@@ -97,6 +99,31 @@ namespace ufo
       return !u.isSat(checkList);
     }
 
+    void shrinkCnjs(ExprSet & cnjs)
+    {
+      ExprSet shrunk;
+      ExprSet cnjsTmp = cnjs;
+      for (auto c1 = cnjsTmp.begin(); c1 != cnjsTmp.end(); ++c1)
+      {
+        if (isOpX<OR>(*c1)) continue;
+        for (auto c2 = cnjs.begin(); c2 != cnjs.end();)
+        {
+          if (!isOpX<OR>(*c2)) { ++c2; continue; };
+          ExprSet dsjs;
+          ExprSet newDsjs;
+          getDisj(*c2, dsjs);
+          for (auto & d : dsjs)
+            if (u.isSat(*c1, d))
+              newDsjs.insert(d);
+          shrunk.insert(disjoin(newDsjs, m_efac));
+          c2 = cnjs.erase(c2);
+          cnjs.insert(disjoin(newDsjs, m_efac));
+        }
+        cnjs.insert(shrunk.begin(), shrunk.end());
+        shrunk.clear();
+      }
+    }
+
     void preproGuessing(Expr e, ExprVector& ev1, ExprVector& ev2, ExprSet& guesses, bool backward = false, bool mutate = true)
     {
       ExprSet ev3;
@@ -109,77 +136,62 @@ namespace ufo
       e = quantifierElimination(e, ev3);
       if (backward) e = mkNeg(e);
 
-      ExprSet cnjs;
+//      ExprSet cnjs;
+//      getConj(e, cnjs);
+//      shrinkCnjs(cnjs);
+//      e = conjoin(cnjs, m_efac);
+//      e = simplifyBool(e);
 
-      getConj(e, cnjs);
-      for (auto & c1 : cnjs)
-      {
-        if (isOpX<OR>(c1)) continue;
-        for (auto & c2 : cnjs)
-        {
-          if (!isOpX<OR>(c2)) continue;
-          ExprSet dsjs;
-          ExprSet newDsjs;
-          getDisj(c2, dsjs);
-          for (auto & d : dsjs)
-          {
-            if (u.implies(c1, d))
-            {
-              e = replaceAll(e, c2, mk<TRUE>(m_efac));
-              newDsjs.clear();
-              break;
-            }
-            if (!u.implies(mkNeg(c1), d)) newDsjs.insert(d);
-          }
-          if (newDsjs.size() > 0) e = replaceAll(e, c2, disjoin(newDsjs, m_efac));
-        }
-      }
       if (!ev2.empty())
         e = replaceAll(e, ev1, ev2); // rename variables only if ev2 is nonempty
       if (mutate)
         mutateHeuristic(e, guesses);
       else
-      {
-        e = simplifyBool(e);
         getConj(e, guesses);
-      }
     }
 
-    void bootstrapping()
+    // search for a CHC having the form r1 /\ .. /\ rn => rel, where rel \not\in {r1, .., rn}
+    bool hasNoDef(Expr rel)
     {
       for (auto & hr : ruleManager.chcs)
-      {
-        if (hr.isQuery)
-        {
-          if (containsOp<ARRAY_TY>(hr.body))
-          {
-            hasArrays = true;
-          }
-          else
-          {
-            for (int i = 0; i < hr.srcVars.size(); i++)
-            {
-              ExprSet vars;
-              vars.insert(hr.locVars.begin(), hr.locVars.end());
-              Expr q = quantifierElimination(hr.body, vars); //we shouldn't do it here; to fix
-              preproGuessing(mk<NEG>(q), hr.srcVars[i],
-                             ruleManager.invVars[hr.srcRelations[i]], candidates[hr.srcRelations[i]]);
-            }
-          }
-        }
-        else
-        {
-          Expr rel = hr.head->left();
-          preproGuessing(hr.body, hr.dstVars, ruleManager.invVars[rel], candidates[hr.dstRelation]);
-        }
-      }
+        if (hr.dstRelation == rel &&
+          find (hr.srcRelations.begin(), hr.srcRelations.end(), rel) == hr.srcRelations.end())
+            return false;
+      return true;
     }
 
-    void propagateCandidatesForward()
+    // lightweight (non-inductive) candidate propagation both ways
+    // subsumes bootstrapping (ssince facts and queries are considered)
+    void propagate(bool fwd = true)
     {
+      int szInit = declsVisited.size();
       for (auto & hr : ruleManager.chcs)
       {
-        if (hr.isQuery) continue;
+        bool dstVisited = declsVisited.find(hr.dstRelation) != declsVisited.end();
+        bool srcVisited = hr.isFact || (hr.isInductive && hasNoDef(hr.dstRelation));
+        for (auto & a : hr.srcRelations)
+          srcVisited |= declsVisited.find(a) != declsVisited.end();
+
+        if (fwd && srcVisited && !dstVisited)
+        {
+          propagateCandidatesForward(hr);
+          declsVisited.insert(hr.dstRelation);
+        }
+        else if (!fwd && !hr.isInductive && !srcVisited && dstVisited)
+        {
+          propagateCandidatesBackward(hr);
+          declsVisited.insert(hr.srcRelations.begin(), hr.srcRelations.end());
+        }
+      }
+
+      if (declsVisited.size() != szInit) propagate(fwd);
+    }
+
+    void propagateCandidatesForward(HornRuleExt& hr)
+    {
+//      for (auto & hr : ruleManager.chcs)
+      {
+        if (hr.isQuery) return;
         ExprSet all;
         all.insert(hr.body);
         for (int i = 0; i < hr.srcVars.size(); i++)
@@ -189,18 +201,21 @@ namespace ufo
           for (auto & c : candidates[rel])
             all.insert(replaceAll(c, ruleManager.invVars[rel], hr.srcVars[i]));
         }
-        preproGuessing(conjoin(all, m_efac), hr.dstVars,
-                       ruleManager.invVars[hr.dstRelation], candidates[hr.dstRelation]);
+
+        if (hr.isInductive)   // get candidates of form [ <var> mod <const> = <const> ]
+          retrieveDeltas (hr.body, hr.srcVars[0], hr.dstVars, candidates[hr.dstRelation]);
+
+        preproGuessing(conjoin(all, m_efac), hr.dstVars, ruleManager.invVars[hr.dstRelation], candidates[hr.dstRelation]);
       }
     }
 
-    void propagateCandidatesBackward()
+    void propagateCandidatesBackward(HornRuleExt& hr)
     {
       if (hasArrays) return; // something is wrong, currently
 
-      for (auto & hr : ruleManager.chcs)
+//      for (auto & hr : ruleManager.chcs)
       {
-        if (hr.isFact || hr.isInductive) continue;
+        if (hr.isFact) return;
 
         Expr dstRel = hr.dstRelation;
         ExprVector& rels = hr.srcRelations;
@@ -228,12 +243,44 @@ namespace ufo
         else cands = candidates[dstRel];
 
         ExprSet mixedCands;
+        ExprVector curCnd;
+
+        for (int i = 0; i < rels.size(); i++)
+          curCnd.push_back(replaceAll(conjoin(candidates[rels[i]], m_efac),
+            ruleManager.invVars[rels[i]], hr.srcVars[i]));
+
         for (auto & c : cands)
         {
-          ExprSet all;
+          ExprSet all, newCnd;
           all.insert(hr.body);
           all.insert(mkNeg(replaceAll(c, ruleManager.invVars[dstRel], hr.dstVars)));
-          preproGuessing(conjoin(all, m_efac), srcVars, invVars, mixedCands, true, true);
+          all.insert(curCnd.begin(), curCnd.end());
+
+          // TODO: add more sophisticated blocking based on unseccussful tries from abdHistory
+
+          preproGuessing(conjoin(all, m_efac), srcVars, invVars, newCnd, true, false);
+
+          if (!(u.isSat(conjoin(curCnd, m_efac), conjoin(newCnd, m_efac))))
+          {
+            // simple heuristic: find if some current guess was already created by abduction
+            // then, delete it and try again
+            if (!hr.isInductive)
+              for (auto & t : abdHistory[&hr])
+                for (int j = 0; j < t.size(); j++)
+                  if (u.implies(conjoin(candidates[rels[j]], m_efac), t[j]))
+                    candidates[rels[j]].clear();
+            continue;
+          }
+
+          // oftentimes, newCnd is a disjunction that can be simplified
+          // by considering other candidates in curCnd
+          auto tmp = newCnd;
+          tmp.insert(curCnd.begin(), curCnd.end());
+          shrinkCnjs(tmp);
+
+          for (auto & b : tmp)
+            if (find(curCnd.begin(), curCnd.end(), b) == curCnd.end())
+              mixedCands.insert(b);
         }
 
         if (hr.srcVars.size() == 1)
@@ -242,13 +289,43 @@ namespace ufo
         {
           // decomposition here
 
+          // fairness heuristic: prioritize candidates for all relations, which are true
+          // TODO: find a way to disable it if for some reason some invariant should only be true
+          vector<bool> trueCands;
+          ExprSet trueRels;
+          int numTrueCands = 0;
+          for (int i = 0; i < rels.size(); i++)
+          {
+            trueCands.push_back(u.isTrue(curCnd[i]));
+            if (trueCands.back())
+            {
+              trueRels.insert(rels[i]);
+              numTrueCands++;
+            }
+          }
+
+          // numTrueCands = 0;       // GF: hack to disable fairness
+
+          ExprSet allGuessesInit;
+          if (numTrueCands > 0)      // at least one curCnd should be true
+            for (int i = 0; i < rels.size(); i++)
+              if (!trueCands[i])
+                allGuessesInit.insert(curCnd[i]);
+
           for (auto & a : mixedCands)
           {
-            ExprSet processed, allGuesses;
+            ExprSet processed;
+            ExprSet allGuesses = allGuessesInit;
+            ExprVector histRec;
 
-            for (auto & r : rels)
+            for (int i = 0; i < rels.size(); i++)
             {
-              if (!u.isSat(a)) return;  // need to recheck because the solver has been reset
+              // skip the relation if it already has a candidate and there exists a relation with no candidate
+              // (existing candidates are already in allGuesses)
+              if (numTrueCands > 0 && !trueCands[i]) continue;
+
+              Expr r = rels[i];
+              if (!u.isSat(a, conjoin(curCnd, m_efac))) return;  // need to recheck because the solver has been reset
               if (processed.find(r) != processed.end()) continue;
 
               invVars.clear();
@@ -270,7 +347,9 @@ namespace ufo
               // model-based cartesian decomposition
               ExprSet all = allGuesses;
               all.insert(mkNeg(a));
-              all.insert(u.getModel(allVarsExcept));
+
+              if (trueRels.size() != 1)                  // again, for fairness heuristic:
+                all.insert(u.getModel(allVarsExcept));
 
               // in the case of nonlin, invVars is empty, so no renaming happens:
               preproGuessing(conjoin(all, m_efac), vars, invVars, backGuesses, true, false);
@@ -278,12 +357,12 @@ namespace ufo
               if (occursNum[r].size() == 1)
               {
                 candidates[r].insert(backGuesses.begin(), backGuesses.end());
+                histRec.push_back(conjoin(backGuesses, m_efac));
                 allGuesses.insert(backGuesses.begin(), backGuesses.end());
               }
               else
               {
                 // nonlinear case; proceed to isomorphic decomposition for each candidate
-
                 map<int, ExprVector> multiabdVars;
 
                 for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
@@ -292,7 +371,7 @@ namespace ufo
                       cloneVar(v, mkTerm<string> (
                         "__multiabd_var" + lexical_cast<string>(*v) + "_" + to_string(*it2), m_efac)));
 
-                for (auto & b : backGuesses)
+                Expr b = conjoin(backGuesses, m_efac);
                 {
                   ExprSet sol;
                   int iter = 0;
@@ -330,6 +409,7 @@ namespace ufo
                     if (!u.isSat(mknary<FORALL>(args), sol.empty() ? mk<TRUE>(m_efac) : disjoin(negModels, m_efac)))
                     {
                       candidates[r].insert(sol.begin(), sol.end());
+                      histRec.push_back(conjoin(sol, m_efac));
                       for (auto it2 = occursNum[r].begin(); it2 != occursNum[r].end(); ++it2)
                         allGuesses.insert(replaceAll(conjoin(sol, m_efac), ruleManager.invVars[r], hr.srcVars[*it2]));
                       break;
@@ -370,7 +450,28 @@ namespace ufo
               }
               processed.insert(r);
             }
+            abdHistory[&hr].push_back(histRec);
 //            outs () << "sanity check: " << u.implies(conjoin(allGuesses, m_efac), a) << "\n";
+          }
+        }
+      }
+    }
+
+    // inductive strengthening of candidates (by abduction)
+    void strengthen(int deep = 0)
+    {
+      if (deep > 1) return; // hardcoded bound
+
+      // currently, relies on the order in CHC file; TBD: proper backwards traversing
+      for (auto hr = ruleManager.chcs.rbegin(); hr != ruleManager.chcs.rend(); hr++)
+      {
+        if (!hr->isFact)
+        {
+          filterUnsat();
+          if (!checkCHC(*hr, candidates))
+          {
+            propagateCandidatesBackward(*hr);
+            strengthen(deep+1);
           }
         }
       }
@@ -419,7 +520,7 @@ namespace ufo
       }
     }
 
-    void printCands(bool unsat = true, bool simplify = true)
+    void printCands(bool unsat = true, bool simplify = false)
     {
       if (unsat) outs () << "unsat\n";
 
@@ -433,7 +534,11 @@ namespace ufo
         outs () << ") Bool\n  ";
 
         ExprSet lms = a.second;
-        if (simplify) u.removeRedundantConjuncts(lms);
+        if (simplify)
+        {
+          shrinkCnjs(lms);
+          u.removeRedundantConjuncts(lms);
+        }
         Expr res = simplifyArithm(conjoin(lms, m_efac));
         u.print(res);
         outs () << ")\n";
@@ -446,7 +551,7 @@ namespace ufo
       for (auto & a : candidates)
         if (!u.isSat(a.second))
           for (auto & hr : ruleManager.chcs)
-            if (hr.dstRelation == a.first) worklist.push_back(&hr);
+            if (hr.dstRelation == a.first && hr.isFact) worklist.push_back(&hr);
 
       multiHoudini(worklist, false);
 
@@ -709,36 +814,48 @@ namespace ufo
       }
     }
 
-    // very restricted version of FreqHorn (no grammars, limited use of arrays)
+    bool equalCands(map<Expr, ExprSet>& cands)
+    {
+      for (auto & a : candidates)
+      {
+        if (a.second.size() != cands[a.first].size()) return false;
+        if (!u.isEquiv(conjoin(a.second, m_efac), conjoin(cands[a.first], m_efac))) return false;
+      }
+      return true;
+    }
+
     void guessAndSolve()
     {
-      bootstrapping();
-
-      auto post = candidates;
-      filterUnsat();
-
-      propagateCandidatesForward();
-      filterUnsat();
-      propagateCandidatesBackward();
-      filterUnsat();
-
       vector<HornRuleExt*> worklist;
-      for (auto & hr : ruleManager.chcs) worklist.push_back(&hr); // todo: wto
-      multiHoudini(worklist);
+      for (auto & hr : ruleManager.chcs)
+      {
+        if (containsOp<ARRAY_TY>(hr.body)) hasArrays = true;
+        worklist.push_back(&hr);
+      }
 
-      if (checkAllOver(true)) return printCands();
+      while (true)
+      {
+        auto candidatesTmp = candidates;
+        for (bool fwd : { false, true })
+        {
+          declsVisited.clear();
+          declsVisited.insert(ruleManager.failDecl);
+          propagate(fwd);
+          filterUnsat();
+          if (fwd) multiHoudini(worklist);  // i.e., weaken
+          else strengthen();
+          if (checkAllOver(true)) return printCands();
+        }
+        if (equalCands(candidatesTmp)) break;
+      }
 
-      getImplicationGuesses(post);
+      getImplicationGuesses(candidates);  // seems broken now; to revisit completely
       filterUnsat();
-
       multiHoudini(worklist);
-
       if (checkAllOver(true)) return printCands();
 
       for (auto tgt : ruleManager.decls) arrayGuessing(tgt->left());
       filterUnsat();
-
-
       multiHoudini(worklist);
       if (checkAllOver(true)) return printCands();
       outs () << "unknown\n";

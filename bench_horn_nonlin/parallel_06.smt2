@@ -1,4 +1,3 @@
-(declare-rel inv1 (Int Int))
 (declare-rel inv2 (Int))
 (declare-rel inv3 (Int))
 (declare-rel inv4 (Int))

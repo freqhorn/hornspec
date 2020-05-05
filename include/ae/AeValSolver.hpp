@@ -301,7 +301,7 @@ namespace ufo
           if (everywhere)
           {
             pprs = pprsTmp;
-            common.insert(a);
+            if (!isOpX<TRUE>(a)) common.insert(a);
           }
         }
 
@@ -311,15 +311,18 @@ namespace ufo
           cnjs.insert(conjoin(p, efac));
         }
 
-        if (!cnjs.empty()) common.insert(simplifyBool(disjoin(cnjs, efac)));
+        if (!cnjs.empty())
+        {
+          Expr tmp = simplifyBool(disjoin(cnjs, efac));
+          if (!isOpX<TRUE>(tmp)) common.insert(tmp);
+        }
         prs = conjoin(common, efac);
       }
       else
       {
         prs = disjoin(projections, efac);
       }
-      if (isOpX<TRUE>(s)) return prs;
-      return mk<AND>(s, prs);
+      return simplifyBool(mk<AND>(s, prs));
     }
     
     /**

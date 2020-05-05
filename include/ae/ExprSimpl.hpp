@@ -2976,12 +2976,11 @@ namespace ufo
               Expr cExpr = exp->right();
               int c = abs(lexical_cast<int>(cExpr));
               if (c > 1)
-              {
-                Expr cand = mk<GEQ>(mk<MOD>(srcVars[i],
-                                        mkTerm (mpz_class (c), exp->getFactory())),
-                                        mkTerm (mpz_class (0), exp->getFactory()));
-                deltas.insert(cand);
-              }
+                for (int j = 0; j < c; j++)
+                  deltas.insert(mk<EQ>(mk<MOD>(
+                    srcVars[i],
+                      mkTerm (mpz_class (c), exp->getFactory())),
+                      mkTerm (mpz_class (j), exp->getFactory())));
             }
           }
         }
@@ -3357,7 +3356,7 @@ namespace ufo
         }
         else
         {
-          guesses.insert(c);
+          guesses.insert(simplifyArithm(c));
         }
       }
       else if (isOp<ComparissonOp>(c))
@@ -3388,7 +3387,7 @@ namespace ufo
           guesses.insert(c);
         }
       }
-      else if (isOpX<OR>(c))
+/*      else if (isOpX<OR>(c))
       {
         ExprSet terms;
         getDisj(c, terms);
@@ -3404,7 +3403,7 @@ namespace ufo
         c = disjoin(newTerms, c->getFactory());
         disjs.insert(c);
         guesses.insert(c);
-      }
+      }*/
       else guesses.insert(c);
     }
 
@@ -3441,7 +3440,8 @@ namespace ufo
       }
     }
 
-    guesses.insert(ineqs.begin(), ineqs.end());
+    for (auto & a : ineqs) guesses.insert(simplifyArithm(a));
+//    guesses.insert(ineqs.begin(), ineqs.end());
 
     for (auto & e : eqs)
     {
@@ -3459,7 +3459,7 @@ namespace ufo
         else if (in->right() == e->right() && !evalLeq(in->left(), e->left()))
           g = mk<LEQ>(in->left(), e->left());
 
-        if (g != NULL) guesses.insert(g);
+        if (g != NULL) guesses.insert(simplifyArithm(g));
       }
     }
 
@@ -3476,7 +3476,7 @@ namespace ufo
         if (evalLeq(in1->right(), in2->left()) &&
             !evalLeq(in1->left(), in2->right()))
         {
-          guesses.insert(mk<LEQ>(in1->left(), in2->right()));
+          guesses.insert(simplifyArithm(mk<LEQ>(in1->left(), in2->right())));
         }
       }
     }
