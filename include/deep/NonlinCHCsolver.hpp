@@ -312,11 +312,14 @@ namespace ufo
               if (!trueCands[i])
                 allGuessesInit.insert(curCnd[i]);
 
-          for (auto & a : mixedCands)
+          for (auto it = mixedCands.begin(); it != mixedCands.end(); )
           {
+            Expr a = *it;
             ExprSet processed;
             ExprSet allGuesses = allGuessesInit;
             ExprVector histRec;
+
+            auto candidatesTmp = candidates;
 
             for (int i = 0; i < rels.size(); i++)
             {
@@ -450,7 +453,50 @@ namespace ufo
               }
               processed.insert(r);
             }
-            abdHistory[&hr].push_back(histRec);
+
+            // fairness heuristic (need to be tested properly):
+            {
+              bool tryAgain = false;
+              if (!abdHistory[&hr].empty() && abdHistory[&hr].back() == histRec)
+              {
+                candidates = candidatesTmp;
+
+                for (int i = 0; i < histRec.size(); i++)
+                {
+                  if (curCnd[i] != histRec[i])
+                  {
+                    trueCands[i] = false;
+                    allGuessesInit.insert(curCnd[i]);
+                  }
+                  else
+                  {
+                    numTrueCands++;
+                    trueCands[i] = true;
+                    trueRels.insert(rels[i]);
+                  }
+                }
+
+                tryAgain = true; // to keep
+              }
+
+              abdHistory[&hr].push_back(histRec);
+
+              if (tryAgain)
+              {
+                if (abdHistory[&hr].size() > 2 /*hardcoded bound*/)
+                {
+                  tryAgain = false;
+                  for (int i = 0; i < 2 /*hardcoded bound*/; i++)
+                    if (abdHistory[&hr][abdHistory[&hr].size() - 1 - i] != histRec)
+                    {
+                      tryAgain = true;
+                      break;
+                    }
+                }
+              }
+
+              if (!tryAgain) ++it;
+            }
 //            outs () << "sanity check: " << u.implies(conjoin(allGuesses, m_efac), a) << "\n";
           }
         }
