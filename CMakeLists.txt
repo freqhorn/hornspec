@@ -181,15 +181,6 @@ else()
   set(GMPXX_LIB "")
 endif()
 
-find_package(OpenMP)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-
-find_package(Armadillo)
-if (ARMADILLO_FOUND)
-  add_definitions(-DHAVE_ARMADILLO)
-  include_directories(${ARMADILLO_INCLUDE_DIR})
-endif()  
-
 install(DIRECTORY include/
   DESTINATION include
   FILES_MATCHING

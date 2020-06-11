@@ -96,7 +96,7 @@ namespace ufo
         for (auto a : lms) negged.insert(mkNeg(replaceAll(a, ruleManager.invVars[rel], hr.dstVars)));
         checkList.insert(disjoin(negged, m_efac));
       }
-      return !u.isSat(checkList);
+      return bool(!u.isSat(checkList));
     }
 
     void shrinkCnjs(ExprSet & cnjs)
