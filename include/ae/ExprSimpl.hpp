@@ -877,6 +877,32 @@ namespace ufo
     else if (c1 < c2)
       plusOpsRight.push_back(mkTerm (mpz_class (c2 - c1), efac));
 
+    if (plusOpsLeft.size() == 0 && plusOpsRight.size() == 0)
+    {
+      if (isOpX<EQ>(exp) || isOpX<GEQ>(exp) || isOpX<LEQ>(exp))
+        return mk<TRUE>(efac);
+      else
+        return mk<FALSE>(efac);
+    }
+
+    if (plusOpsLeft.size() == 0 && plusOpsRight.size() == 1 &&
+        isOpX<MPZ>(*plusOpsRight.begin()))
+    {
+      if (evaluateCmpConsts(exp, 0, lexical_cast<int>(*plusOpsRight.begin())))
+        return mk<TRUE>(efac);
+      else
+        return mk<FALSE>(efac);
+    }
+
+    if (plusOpsLeft.size() == 1 && plusOpsRight.size() == 0 &&
+        isOpX<MPZ>(*plusOpsLeft.begin()))
+    {
+      if (evaluateCmpConsts(exp, lexical_cast<int>(*plusOpsLeft.begin()), 0))
+        return mk<TRUE>(efac);
+      else
+        return mk<FALSE>(efac);
+    }
+
     return reBuildCmp(exp, mkplus(plusOpsLeft, efac), mkplus(plusOpsRight, efac));
   }
 
@@ -1091,7 +1117,9 @@ namespace ufo
         ExprSet dsjs;
         ExprSet newDsjs;
         getDisj(exp, dsjs);
-        for (auto & a : dsjs){
+        for (auto a : dsjs)
+        {
+          a = simplifyBool(a);
           if (isOpX<TRUE>(a))
           {
             return mk<TRUE>(efac);
@@ -1100,7 +1128,7 @@ namespace ufo
           {
             continue;
           }
-          newDsjs.insert(simplifyBool(a));
+          newDsjs.insert(a);
         }
         return disjoin (newDsjs, efac);
       }
@@ -1110,7 +1138,9 @@ namespace ufo
         ExprSet cnjs;
         ExprSet newCnjs;
         getConj(exp, cnjs);
-        for (auto & a : cnjs){
+        for (auto a : cnjs)
+        {
+          a = simplifyBool(a);
           if (isOpX<FALSE>(a))
           {
             return mk<FALSE>(efac);
@@ -1119,7 +1149,7 @@ namespace ufo
           {
             continue;
           }
-          newCnjs.insert(simplifyBool(a));
+          newCnjs.insert(a);
         }
         return conjoin (newCnjs, efac);
       }
@@ -1344,7 +1374,7 @@ namespace ufo
       Expr var = NULL;
       for (auto & a : ops)
       {
-        if (isNumericConst(a))
+        if (isOpX<MPZ>(a))
         {
           coef *= lexical_cast<int>(a);
         }
@@ -1384,7 +1414,7 @@ namespace ufo
     {
       return e->left();
     }
-    else if (isNumericConst(e))
+    else if (isOpX<MPZ>(e))
     {
       return mkTerm (mpz_class (-lexical_cast<int>(e)), e->getFactory());
     }
@@ -2347,9 +2377,9 @@ namespace ufo
       if (term->arg(0) == term->arg(1)) return true;
 
     if (isOp<ComparissonOp>(term))
-      if (isNumericConst(term->arg(0)) && isNumericConst(term->arg(1)))
+      if (isOpX<MPZ>(term->arg(0)) && isOpX<MPZ>(term->arg(1)))
         return evaluateCmpConsts(term,
-                                 lexical_cast<int>(term->arg(0)), lexical_cast<int>(term->arg(1)));
+          lexical_cast<int>(term->arg(0)), lexical_cast<int>(term->arg(1)));
 
     ExprSet cnjs;
     getConj(term, cnjs);
@@ -2425,8 +2455,8 @@ namespace ufo
 
         Expr rewritten = ineqMover(d, var);
 
-        if (isNumericConst(rewritten->arg(0)) &&
-            isNumericConst(rewritten->arg(1))) {
+        if (isOpX<MPZ>(rewritten->arg(0)) &&
+            isOpX<MPZ>(rewritten->arg(1))) {
 
           if (evaluateCmpConsts(rewritten, lexical_cast<int>(rewritten->arg(0)),
                                            lexical_cast<int>(rewritten->arg(1)))){
@@ -2442,7 +2472,7 @@ namespace ufo
           if (rewritten->arg(0) != var) { ++it; continue; }
         }
 
-        if (!isNumericConst(rewritten->arg(1))) { ++it; continue; }
+        if (!isOpX<MPZ>(rewritten->arg(1))) { ++it; continue; }
 
         int c = lexical_cast<int>(rewritten->arg(1));
 
@@ -2564,7 +2594,7 @@ namespace ufo
       
       for (auto &e : all)
       {
-        if (isNumericConst(e))
+        if (isOpX<MPZ>(e))
         {
           intconst += lexical_cast<int>(e);
         }
