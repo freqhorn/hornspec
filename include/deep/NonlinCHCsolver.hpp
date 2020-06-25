@@ -52,17 +52,20 @@ namespace ufo
       if (isNonlinear(cond)) {
         newCond = simpleQE(cond, vars, true, true);
         if (!u.implies(cond, newCond)) {
-          newCond = mk<TRUE>(m_efac);
+          return mk<TRUE>(m_efac);
         }
       } else {
         AeValSolver ae(mk<TRUE>(m_efac), cond, vars); // exists quantified . formula
         if (ae.solve()) {
           newCond = ae.getValidSubset();
         } else {
-          newCond = mk<TRUE>(m_efac);
+          return mk<TRUE>(m_efac);
         }
       }
-
+      if (!emptyIntersect(newCond, vars)) // sanity check
+      {
+        return mk<TRUE>(m_efac);
+      }
       return simplifyBool(newCond);
     }
 
@@ -133,8 +136,10 @@ namespace ufo
         if (find(ev1.begin(), ev1.end(), *it) == ev1.end()) ++it;
         else it = ev3.erase(it);
       }
+
       e = quantifierElimination(e, ev3);
       if (backward) e = mkNeg(e);
+      e = simplifyBool(simplifyArithm(e, false, true));
 
 //      ExprSet cnjs;
 //      getConj(e, cnjs);
@@ -580,12 +585,15 @@ namespace ufo
         outs () << ") Bool\n  ";
 
         ExprSet lms = a.second;
+        Expr res = simplifyBool(simplifyArithm(conjoin(lms, m_efac)));
         if (simplify)
         {
+          lms.clear();
+          getConj(res, lms);
           shrinkCnjs(lms);
           u.removeRedundantConjuncts(lms);
+          res = conjoin(lms, m_efac);
         }
-        Expr res = simplifyArithm(conjoin(lms, m_efac));
         u.print(res);
         outs () << ")\n";
       }
