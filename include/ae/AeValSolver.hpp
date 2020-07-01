@@ -470,12 +470,13 @@ namespace ufo
     /**
      * Return "e + c"
      */
-    Expr getPlusConst(Expr e, bool isInt, int c)
+    Expr getPlusConst(Expr e, bool isInt, cpp_int c)
     {
       if (isOpX<MPZ>(e) && isInt)
-        return  mkTerm (mpz_class (c + boost::lexical_cast<int> (e)), efac);
+        return mkTerm (mpz_class (string (c + boost::lexical_cast<cpp_int> (e))), efac);
       
-      Expr ce = isInt ? mkTerm (mpz_class (c), efac) : mkTerm (mpq_class (c), efac);
+      Expr ce = isInt ? mkTerm (mpz_class (string(c)), efac) :
+                        mkTerm (mpq_class (string(c)), efac);
       return mk<PLUS>(e, ce);
     }
     
@@ -485,7 +486,7 @@ namespace ufo
     Expr getAssignmentForVar(Expr var, Expr exp)
     {
       if (debug) outs () << "getAssignmentForVar " << *var << " in " << *exp << "\n";
-      
+
       bool isInt = bind::isIntConst(var);
       
       if (isOp<ComparissonOp>(exp))
@@ -710,13 +711,13 @@ namespace ufo
   inline void aeSolveAndSkolemize(Expr s, Expr t)
   {
     ExprSet s_vars;
-    ExprSet t_vars;
-    
+    ExprSet t_quantified;
+
     filter (s, bind::IsConst (), inserter (s_vars, s_vars.begin()));
-    filter (t, bind::IsConst (), inserter (t_vars, t_vars.begin()));
-    
-    ExprSet t_quantified = minusSets(t_vars, s_vars);
-    
+    filter (t, bind::IsConst (), inserter (t_quantified, t_quantified.begin()));
+
+    minusSets(t_quantified, s_vars);
+
     outs() << "S: " << *s << "\n";
     outs() << "T: \\exists ";
     for (auto &a: t_quantified) outs() << *a << ", ";

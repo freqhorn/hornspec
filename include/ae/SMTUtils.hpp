@@ -68,28 +68,12 @@ namespace ufo
       for (auto & c : cnjs)
       {
         filter (c, bind::IsConst (), inserter (allVars, allVars.begin()));
-        if (isOpX<FORALL>(c))
-        {
-          ExprVector varz;
-          for (int i = 0; i < c->arity() - 1; i++)
-          {
-            varz.push_back(bind::fapp(c->arg(i)));
-          }
-          smt.assertForallExpr(varz, c->last());
-        }
-        else if (isOpX<EXISTS>(c))
-        {
-          smt.assertExpr(c->last());
-        }
-        else
-        {
-          if (containsOp<FORALL>(c)) return logic::indeterminate;
-          smt.assertExpr(c);
-        }
+        smt.assertExpr(c);
       }
       boost::tribool res = smt.solve ();
       return res;
     }
+
     /**
      * SMT-check
      */

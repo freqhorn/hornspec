@@ -327,6 +327,9 @@ namespace ufo
         if (lexical_cast<cpp_int>(tmp->left()) > 0)
           return mk<T>(tmp, additiveInverse(e->right()));
 
+    if (bind::isIntConst(tmp) || bind::isRealConst(tmp))
+      return mk<T>(tmp, additiveInverse(e->right()));
+
     return e;
   }
 
@@ -336,76 +339,45 @@ namespace ufo
   template <typename T> static Expr rewriteHelperM(Expr e, Expr var){
     Expr l = e->left();
     Expr r = e->right();
-    ExprVector lhs;  // expressions containing var
-    ExprVector rhs;  // the rest of e
+    ExprVector orig_lhs, orig_rhs, lhs, rhs;
 
-    // first, parse l;
+    // parse
 
-    if (isOpX<PLUS>(l)){
-      for (unsigned i = 0; i < l->arity (); i++){
-        Expr a = l->arg(i);
-        if (isConstOrItsAdditiveInverse(a, var)){
-          lhs.push_back(a);
-        } else {
-          rhs.push_back(additiveInverse(a));
-        }
-      }
-    } else if (isOpX<MINUS>(l)){
-      if (isConstOrItsAdditiveInverse(l->left(), var)){
-        lhs.push_back(l->left());
-      } else {
-        rhs.push_back(additiveInverse(l->left()));
-      }
-      if (isConstOrItsAdditiveInverse(l->right(), var)){
-        lhs.push_back(additiveInverse(l->right()));
-      } else {
-        rhs.push_back(l);
-      }
-    } else {
-      if (isConstOrItsAdditiveInverse(l, var)){
-        lhs.push_back(l);
-      } else if (lexical_cast<string>(l) != "0"){
-        rhs.push_back(additiveInverse(l));
-      }
-    }
-
-    // second, parse r;
-
-    if (isOpX<PLUS>(r)){
-      for (unsigned i = 0; i < r->arity (); i++){
-        Expr a = r->arg(i);
-        if (isConstOrItsAdditiveInverse(a, var)){
-          lhs.push_back(additiveInverse(a));
-        } else {
-          rhs.push_back(a);
-        }
-      }
-    } else if (isOpX<MINUS>(r)){
-      if (isConstOrItsAdditiveInverse(r->left(), var)){
-        lhs.push_back(additiveInverse(r->left()));
-      } else {
-        rhs.push_back(r->left());
-      }
-      if (isConstOrItsAdditiveInverse(r->right(), var)){
-        lhs.push_back(r->right());
-      } else {
-        rhs.push_back(r->right());
-      }
-    } else {
-      if (isConstOrItsAdditiveInverse(r, var)){
-        lhs.push_back(additiveInverse(r));
-      } else if (lexical_cast<string>(r) != "0"){
-        rhs.push_back(r);
-      }
-    }
-
-    // third, combine results;
-
-    int coef = 0;
-    for (auto &a : lhs)
+    getAddTerm(l, orig_lhs);
+    getAddTerm(r, orig_rhs);
+    for (auto & a : orig_lhs)
     {
-      if (a == var) coef++;
-      if (var == additiveInverse(a)) coef--;
+      if (contains (a, var)) lhs.push_back(a);
+      else rhs.push_back(additiveInverse(a));
+    }
+    for (auto & a : orig_rhs)
+    {
+      if (contains (a, var)) lhs.push_back(additiveInverse(a));
+      else rhs.push_back(a);
+    }
+
+    // combine results
+
+    cpp_int coef = 0;
+    for (auto it = lhs.begin(); it != lhs.end(); )
+    {
+      bool found = false;
+      if (*it == var) { coef++; found = true; }
+      if (isOpX<UN_MINUS>(*it) && (*it)->left() == var) { coef--; found = true; }
+      if (isOpX<MULT>(*it) && 2 == (*it)->arity() && isOpX<MPZ>((*it)->left()) && (*it)->right() == var) {
+        coef += lexical_cast<cpp_int>((*it)->left());
+        found = true;
+      }
+
+      if (found) { it = lhs.erase(it); continue; }
+      else ++it;
+    }
+
+    if (!lhs.empty())
+    {
+//      errs() << "WARNING: COULD NOT NORMALIZE w.r.t. " << *var << ": "
+//             << *conjoin (lhs, e->getFactory()) << "\n";
+      return e;
     }
 
     r = mkplus(rhs, e->getFactory());
@@ -415,7 +387,7 @@ namespace ufo
     } else if (coef == 1){
       l = var;
     } else {
-      l = mk<MULT>(mkTerm (mpz_class (coef), e->getFactory()), var);
+      l = mk<MULT>(mkTerm (mpz_class (string(coef)), e->getFactory()), var);
     }
 
     return mk<T>(l,r);
@@ -609,55 +581,27 @@ namespace ufo
     return e;
   }
 
-  /**
-   *
-   */
-  inline static Expr eqDiffMover(Expr e){
-    if(isOpX<EQ>(e)){
-      if (isOpX<MINUS>(e->left()) && e->left()->arity() == 2 && lexical_cast<string>(e->right()) == "0"){
-        return mk<EQ>(e->left()->left(), e->left()->right());
-      }
-    }
-    return e;
-  }
+  static Expr simplifyArithm (Expr exp, bool keepRedundandDisj, bool keepRedundandConj);
 
   /**
-   * Search for an equality
+   * Move var v to LHS of each expression and simplify
    */
-  inline static bool equalitySearch(ExprSet& expClauses, Expr var){
-    for (auto &e: expClauses){
-      if (isOpX<EQ>(e)){
-        Expr l = e->left();
-        Expr r = e->right();
-        if (l == var || r == var){
-          ExprSet singleton;
-          singleton.insert(e);
-          expClauses = singleton;
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Simplifier Wrapper
-   */
-  inline static Expr ineqSimplifier(Expr v, Expr exp){
+  inline static Expr ineqSimplifier(Expr v, Expr exp, bool merge = false){
     ExprSet substsMap;
     if (isOpX<AND>(exp)){
-      for (ENode::args_iterator it = exp->args_begin(), end = exp->args_end();
-           it != end; ++it){
-        Expr cl = *it;
-        cl = exprMover(*it, v);
-        cl = ineqMover(cl, v);
-        cl = ineqReverter (cl);
-        substsMap.insert(cl);
-      }
+      ExprSet cnjs;
+      getConj(exp, cnjs);
+      for (Expr cl : cnjs)
+        substsMap.insert(ineqSimplifier(v, cl));
 
-      ineqMerger(substsMap);
-      equalitySearch(substsMap, v);
+      if (merge) ineqMerger(substsMap);
       return conjoin(substsMap, v->getFactory());
+    }
+    else if (isOp<ComparissonOp>(exp))
+    {
+      exp = ineqMover(exp, v);
+      exp = simplifyArithm(exp, false, false);
+      exp = ineqReverter(exp);
     }
     return exp;
   }
@@ -796,9 +740,14 @@ namespace ufo
     {
       return mk<AND>(fla->left(), mkNeg(fla->right()));
     }
-    else if (isOpX<FORALL>(fla))
+    else if (isOpX<FORALL>(fla) || isOpX<EXISTS>(fla))
     {
-      return mkNeg(fla->last());
+      ExprVector args;
+      for (int i = 0; i < fla->arity() - 1; i++)
+        args.push_back(fla->arg(i));
+      args.push_back(mkNeg(fla->last()));
+      return isOpX<FORALL>(fla) ?
+        mknary<EXISTS>(args) : mknary<FORALL>(args);
     }
     return mk<NEG>(fla);
   }
@@ -857,7 +806,25 @@ namespace ufo
     }
     return e;
   }
-    
+
+  inline static Expr simplifyMod (Expr e)
+  {
+    if (isOpX<MOD>(e) && isOpX<MPZ>(e->right()))
+    {
+      cpp_int coef = 1;
+      cpp_int divider = lexical_cast<cpp_int>(e->right());
+      ExprVector ops;
+      getMultOps (e->left(), ops);
+
+      for (auto a : ops)
+        if (isOpX<MPZ>(a))
+          coef *= lexical_cast<cpp_int>(a);
+
+      if (coef % divider == 0)
+        return mkTerm (mpz_class (0), e->getFactory());
+    }
+    return e;
+  }
 
   inline static Expr simplifyIte (Expr exp)  // simple version, on the syntactic level
   {
@@ -1101,6 +1068,11 @@ namespace ufo
         return simplifyMult(exp);
       }
 
+      if (isOpX<MOD>(exp))
+      {
+        return simplifyMod(exp);
+      }
+
       if (isOpX<UN_MINUS>(exp))
       {
         return additiveInverse(exp->left());
@@ -1291,14 +1263,6 @@ namespace ufo
         continue;
       }
 
-      if (isOpX<NEG>(*it))
-      {
-        Expr negged = mkNeg((*it)->left());
-        it = cnjs.erase(it);
-        cnjs.insert(negged);
-        continue;
-      }
-
       Expr a = replaceAll(*it, facts, repls);
 
       if (isOpX<IMPL>(a))
@@ -1364,27 +1328,6 @@ namespace ufo
             toInsert.insert(c);
           }
         }
-        else if (isOpX<EQ>(c))
-        {
-          if (bind::isIntConst(c->left())  &&
-              find(hardVars.begin(), hardVars.end(), c->left()) == hardVars.end())
-          {
-            toRestart = true;
-            facts.push_back(c->left());
-            repls.push_back(c->right());
-          }
-          else if (bind::isIntConst(c->right())  &&
-                   find(hardVars.begin(), hardVars.end(), c->right()) == hardVars.end())
-          {
-            toRestart = true;
-            facts.push_back(c->right());
-            repls.push_back(c->left());
-          }
-          else
-          {
-            toInsert.insert(c);
-          }
-        }
         else
         {
           toInsert.insert(c);
@@ -1410,17 +1353,13 @@ namespace ufo
     simplBoolReplCnjHlp(hardVars, cnjs, facts, repls);
   }
 
-  inline static ExprSet minusSets(ExprSet& v1, ExprSet& v2){
-    ExprSet v3;
-    bool res;
-    for (auto &var1: v1){
-      res = true;
-      for (auto &var2: v2){
-        if (var1 == var2) { res = false; break;}
-      }
-      if (res) v3.insert(var1);
+  // rewrites v1 to contain v1 \ v2
+  template<typename Range> static void minusSets(ExprSet& v1, Range& v2){
+    for (auto it = v1.begin(); it != v1.end(); ){
+      if (find(v2.begin(), v2.end(), *it) != v2.end())
+        it = v1.erase(it);
+      else ++it;
     }
-    return v3;
   }
 
   inline static bool isNumericConst(Expr e)
@@ -1438,6 +1377,8 @@ namespace ufo
     }
     return -1;
   }
+
+  static Expr rewriteMultAdd (Expr exp);
 
   inline static void getAddTerm (Expr a, ExprVector &terms) // implementation (mutually recursive)
   {
@@ -1466,6 +1407,12 @@ namespace ufo
       for (auto & t : tmp)
         terms.push_back(additiveInverse(t));
     }
+    else if (isOpX<MULT>(a))
+    {
+      Expr tmp = rewriteMultAdd(a);
+      if (tmp == a) terms.push_back(a);
+      else getAddTerm(tmp, terms);
+    }
     else
     {
       terms.push_back(a);
@@ -1478,7 +1425,7 @@ namespace ufo
 
     Expr operator() (Expr exp)
     {
-      if (isOpX<MULT>(exp))
+      if (isOpX<MULT>(exp) && exp->arity() == 2)
       {
         Expr lhs = exp->left();
         Expr rhs = exp->right();
@@ -1545,7 +1492,7 @@ namespace ufo
               for (auto & c : extraVars) if (c.second == b) { found = true; break; }
               if (! found)
               {
-                errs () << "WARNING. Wrong symbol at " << *t << ".\n";
+//                errs () << "WARNING. Wrong symbol at " << *t << ".\n";
                 return mk<TRUE>(t->getFactory());
               }
             }
@@ -2242,7 +2189,7 @@ namespace ufo
 
     VisitAction operator() (Expr exp)
     {
-      if (isOp<FORALL>(exp))
+      if (isOp<FORALL>(exp) || isOp<EXISTS>(exp))
       {
         for (int i = 0; i < exp->arity() - 1; i++)
         {
@@ -2259,95 +2206,88 @@ namespace ufo
     dagVisit (qe, exp);
   }
 
-  template<typename Range> static void update_min_value(ExprMap& m, Expr key, Expr value, Range& quantified, ExprSet& newCnjs)
+  inline static void getQuantifiedFormulas (Expr a, ExprSet &flas)
   {
-    // just heuristic
-    if (m[key] == NULL)
-    {
-      m[key] = value;
-    }
-    else if (emptyIntersect(value, quantified) || treeSize(value) < treeSize(m[key]))
-    {
-      newCnjs.insert(mk<EQ>(key, m[key]));
-      m[key] = value;
-    }
-    else newCnjs.insert(mk<EQ>(key, value));
+    if (isOpX<FORALL>(a) || isOpX<EXISTS>(a))
+      flas.insert(a);
+    else // TODO: remove/generalize later
+      for (unsigned i = 0; i < a->arity(); i++)
+        getQuantifiedFormulas(a->arg(i), flas);
   }
 
-  template<typename Range> static Expr simpleQE(Expr exp, Range& quantified, bool removeUsed = true, bool strict = false)
+  // rewrite just equalities
+  template<typename Range> static Expr simpleQE(Expr exp, Range& quantified)
   {
-    // rewrite just equalities
-    ExprSet cnjs;
-    ExprSet newCnjs;
-    ExprMap eqs;
-    getConj(exp, cnjs);
-    for (auto & a : cnjs)
+    ExprFactory& efac = exp->getFactory();
+    ExprSet cnjsSet;
+    getConj(exp, cnjsSet);
+    ExprVector cnjs;
+    cnjs.insert(cnjs.end(), cnjsSet.begin(), cnjsSet.end());
+    for (auto & var : quantified)
     {
-      bool eq = false;
-      if (isOpX<EQ>(a))
+      ExprSet eqs;
+      for (unsigned it = 0; it < cnjs.size(); )
       {
-        for (auto & b : quantified)
+        Expr cnj = cnjs[it];
+        if (!isOpX<EQ>(cnj) || !contains(cnj, var))
+          { it++; continue;}
+
+        Expr normalized = cnj;
+        if (isNumeric(var) && isNumeric(cnj->left()))
         {
-          if (a->left() == b && (!strict || emptyIntersect(a->right(), quantified)))
+          normalized = simplifyArithm(
+            mk<EQ>(mk<PLUS>(cnj->arg(0), additiveInverse(cnj->arg(1))),
+              mkTerm (mpz_class (0), efac)));
+          normalized = ineqSimplifier(var, normalized);
+        }
+
+        // after the normalization, var can be eliminated
+        if (!isOpX<EQ>(normalized) || !contains(normalized, var))
+          { it++; continue;}
+
+        if (!contains (normalized->right(), var))
+        {
+          if (var == normalized->left())
           {
-            eq = true;
-            update_min_value(eqs, b, a->right(), quantified, newCnjs);
-            break;
+            eqs.insert(normalized->right());
+            cnjs.erase (cnjs.begin()+it);
+            continue;
           }
-          else if (a->right() == b && (!strict || emptyIntersect(a->left(), quantified)))
+          else if (isOpX<MULT>(normalized->left()) && isOpX<MPZ>(normalized->left()->left()))
           {
-            eq = true;
-            update_min_value(eqs, b, a->left(), quantified, newCnjs);
-            break;
+            cnjs.push_back(mk<EQ>(mk<MOD>(normalized->right(), normalized->left()->left()),
+                               mkTerm (mpz_class (0), efac)));
           }
         }
+
+//        errs() << "WARNING: COULD NOT NORMALIZE w.r.t. " << *var << ": "
+//               << *normalized << "     [[  " << *cnj << "  ]]\n";
+
+        cnjs[it] = normalized;
+        it++;
       }
-      if (!eq) newCnjs.insert(a);
+
+      if (eqs.empty()) continue;
+
+      Expr repl = *eqs.begin();
+      int min_sz = INT_MAX;
+
+      // first, search for a non-constant replacement, if possible
+      for (auto cnj = std::next(eqs.begin()); cnj != eqs.end(); cnj++)
+        if (treeSize(*cnj) < min_sz && !isOpX<MPZ>(*cnj))
+          { repl = *cnj; min_sz = treeSize(*cnj); }
+
+      // second, make sure that all replacements are equal
+      for (auto cnj = eqs.begin(); cnj != eqs.end(); cnj++)
+        if (*cnj != repl) cnjs.push_back(mk<EQ>(repl, *cnj));
+
+      // finally, replace the remaining cnjs
+      for (unsigned it = 0; it < cnjs.size(); it++)
+        cnjs[it] = replaceAll(cnjs[it], var, repl);
+
     }
 
-    Expr qed = conjoin(newCnjs, exp->getFactory());
-    ExprSet used;
-    while (true)
-    {
-      bool toBreak = true;
-      for (auto & a : eqs)
-      {
-        if (a.first == NULL || a.second == NULL) continue;
-        if (!emptyIntersect(a.first, qed))
-        {
-          qed = replaceAll(qed, a.first, a.second);
-          if (removeUsed) used.insert(a.first);
-          toBreak = false;
-        }
-        for (auto & b : eqs)
-        {
-          if (a == b) continue;
-          if (!emptyIntersect(a.first, b.second))
-          {
-            b.second = replaceAll(b.second, a.first, a.second);
-          }
-        }
-      }
-      if (toBreak) break;
-    }
-
-    newCnjs.clear();
-    getConj(qed, newCnjs);
-    if (strict)
-    {
-      for (auto it = newCnjs.begin(); it != newCnjs.end(); )
-      if (emptyIntersect(*it, quantified)) ++it;
-      else it = newCnjs.erase(it);
-      return conjoin(newCnjs, exp->getFactory());
-    }
-
-    for (auto & a : eqs)
-    {
-      if (find(used.begin(), used.end(), a.first) == used.end())
-        newCnjs.insert(mk<EQ>(a.first, a.second));
-    }
-    qed = conjoin(newCnjs, exp->getFactory());
-    return qed;
+    return (conjoin(cnjs, exp->getFactory()));
   }
 
   struct QESubexpr
