@@ -45,34 +45,6 @@ namespace ufo
 
     NonlinCHCsolver (CHCs& r) : m_efac(r.m_efac), ruleManager(r), u(m_efac) {}
 
-    Expr quantifierElimination(Expr& cond, ExprSet& vars)
-    {
-      if (vars.size() == 0) return simplifyBool(cond);
-
-      if (containsOp<FORALL>(cond) || containsOp<EXISTS>(cond))
-        return mk<TRUE>(m_efac);
-
-      Expr newCond;
-      if (isNonlinear(cond)) {
-        newCond = simpleQE(cond, vars);
-        if (!u.implies(cond, newCond)) {
-          return mk<TRUE>(m_efac);
-        }
-      } else {
-        AeValSolver ae(mk<TRUE>(m_efac), cond, vars); // exists quantified . formula
-        if (ae.solve()) {
-          newCond = ae.getValidSubset();
-        } else {
-          return mk<TRUE>(m_efac);
-        }
-      }
-      if (!emptyIntersect(newCond, vars)) // sanity check
-      {
-        return mk<TRUE>(m_efac);
-      }
-      return simplifyBool(newCond);
-    }
-
     bool checkAllOver (bool checkQuery = false)
     {
       for (auto & hr : ruleManager.chcs)
@@ -133,17 +105,47 @@ namespace ufo
 
     void preproGuessing(Expr e, ExprVector& ev1, ExprVector& ev2, ExprSet& guesses, bool backward = false, bool mutate = true)
     {
+      e = rewriteSelectStore(e);
+      ExprSet complex;
+      findComplexNumerics(e, complex);
+      ExprMap repls;
+      ExprMap replsRev;
+      map<Expr, ExprSet> replIngr;
+      for (auto & a : complex)
+      {
+        Expr repl = bind::intConst(mkTerm<string>
+              ("__repl_" + lexical_cast<string>(repls.size()), m_efac));
+        repls[a] = repl;
+        replsRev[repl] = a;
+        ExprSet tmp;
+        filter (a, bind::IsConst (), inserter (tmp, tmp.begin()));
+        replIngr[repl] = tmp;
+      }
+      Expr eTmp = replaceAll(e, repls);
+
       ExprSet ev3;
-      filter (e, bind::IsConst (), inserter (ev3, ev3.begin())); // prepare vars
+      filter (eTmp, bind::IsConst (), inserter (ev3, ev3.begin())); // prepare vars
       for (auto it = ev3.begin(); it != ev3.end(); )
       {
-        if (find(ev1.begin(), ev1.end(), *it) == ev1.end()) ++it;
-        else it = ev3.erase(it);
+        if (find(ev1.begin(), ev1.end(), *it) != ev1.end()) it = ev3.erase(it);
+        else
+        {
+          Expr tmp = replsRev[*it];
+          if (tmp == NULL) ++it;
+          else
+          {
+            ExprSet tmpSet = replIngr[*it];
+            minusSets(tmpSet, ev1);
+            if (tmpSet.empty()) it = ev3.erase(it);
+            else ++it;
+          }
+        }
       }
 
-      e = quantifierElimination(e, ev3);
-      if (backward) e = mkNeg(e);
-      e = simplifyBool(simplifyArithm(e, false, true));
+      eTmp = eliminateQuantifiers(eTmp, ev3);
+      if (backward) eTmp = mkNeg(eTmp);
+      eTmp = simplifyBool(simplifyArithm(eTmp, false, true));
+      e = replaceAll (eTmp, replsRev);
 
 //      ExprSet cnjs;
 //      getConj(e, cnjs);

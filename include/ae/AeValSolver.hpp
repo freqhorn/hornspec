@@ -686,7 +686,7 @@ namespace ufo
       
       m[var] = u.numericUnderapprox(mk<EQ>(var, entr))->right();
     }
-    
+
     /**
      * Actually, just print it to cmd in the smt-lib2 format
      */
@@ -708,34 +708,70 @@ namespace ufo
   /**
    * Simple wrapper
    */
-  inline void aeSolveAndSkolemize(Expr s, Expr t)
+  Expr eliminateQuantifiers(Expr cond, ExprSet& vars)
   {
-    ExprSet s_vars;
-    ExprSet t_quantified;
+    ExprFactory &efac = cond->getFactory();
+    SMTUtils u(efac);
+    if (vars.size() == 0) return simplifyBool(cond);
 
-    filter (s, bind::IsConst (), inserter (s_vars, s_vars.begin()));
-    filter (t, bind::IsConst (), inserter (t_quantified, t_quantified.begin()));
+    if (containsOp<FORALL>(cond) || containsOp<EXISTS>(cond))
+      return mk<TRUE>(efac);
 
-    minusSets(t_quantified, s_vars);
-
-    outs() << "S: " << *s << "\n";
-    outs() << "T: \\exists ";
-    for (auto &a: t_quantified) outs() << *a << ", ";
-    outs() << *t << "\n";
-    
-    AeValSolver ae(s, t, t_quantified);
-    
-    Expr res;
-    if (ae.solve()){
-      res = ae.getValidSubset();
-      outs() << "\nvalid subset:\n";
+    Expr newCond = simpleQE(cond, vars);
+    if (isNonlinear(newCond)) {
+      newCond = simpleQE(newCond, vars);
+      if (!u.implies(cond, newCond)) {
+        return mk<TRUE>(efac);
+      }
     } else {
-      res = ae.getSimpleSkolemFunction();
-      outs() << "\nextracted skolem:\n";
+      AeValSolver ae(mk<TRUE>(efac), newCond, vars); // exists quantified . formula
+      if (ae.solve()) {
+        newCond = ae.getValidSubset();
+      } else {
+        return mk<TRUE>(efac);
+      }
     }
-    
-    ae.serialize_formula(res);
+    if (!emptyIntersect(newCond, vars)) // sanity check
+    {
+      return mk<TRUE>(efac);
+    }
+    return simplifyBool(newCond);
   };
+
+  Expr abduce (Expr goal, Expr assm)
+  {
+    ExprFactory &efac = goal->getFactory();
+    SMTUtils u(efac);
+    ExprSet complex;
+    findComplexNumerics(assm, complex);
+    findComplexNumerics(goal, complex);
+    ExprMap repls;
+    ExprMap replsRev;
+    for (auto & a : complex)
+    {
+      Expr repl = bind::intConst(mkTerm<string>
+            ("__repl_" + lexical_cast<string>(repls.size()), efac));
+      repls[a] = repl;
+      replsRev[repl] = a;
+    }
+    Expr goalTmp = replaceAll(goal, repls);
+    Expr assmTmp = replaceAll(assm, repls);
+
+    ExprSet vars;
+    filter (assmTmp, bind::IsConst (), inserter(vars, vars.begin()));
+    Expr tmp = mkNeg(eliminateQuantifiers(mkNeg(mk<IMPL>(assmTmp, goalTmp)), vars));
+    tmp = replaceAll(tmp, replsRev);
+
+    if (isOpX<FALSE>(tmp)) return NULL; // abduction unsuccessful
+
+    // sanity check:
+    if (!u.implies(mk<AND>(tmp, assm), goal))
+    {
+      errs () << "WARNING: abduction fail: "<< * mk<AND>(tmp, assm) << "   does not imply " << *goal << "\n";
+      return NULL;
+    }
+    return tmp;
+  }
 }
 
 #endif

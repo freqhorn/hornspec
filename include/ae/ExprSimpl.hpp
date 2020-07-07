@@ -107,6 +107,24 @@ namespace ufo
     return bind::typeOf(a) == mk<INT_TY>(a->getFactory());
   }
 
+  inline static void findComplexNumerics (Expr a, ExprSet &terms)
+  {
+    if (bind::isIntConst(a) || isOpX<MPZ>(a)) return;
+    if (isNumeric(a))
+    {
+      bool hasNoNumeric = false;
+      for (unsigned i = 0; i < a->arity(); i++)
+        if (!isNumeric(a->arg(i))) hasNoNumeric = true;
+      if (hasNoNumeric)
+      {
+        terms.insert(a);
+        return;
+      }
+    }
+    for (unsigned i = 0; i < a->arity(); i++)
+      findComplexNumerics(a->arg(i), terms);
+  }
+
   inline static void getArrIneqs (Expr a, ExprSet &ineqs)
   {
     if (isOp<ComparissonOp>(a) && containsOp<SELECT>(a)){
@@ -2864,6 +2882,7 @@ namespace ufo
         string s1 = lexical_cast<string>(v);
         for (auto it = all.begin(); it != all.end();)
         {
+          if (!contains(*it, v)) { ++it; continue; }
           string s2 = lexical_cast<string>(*it);
 
           if (s1 == s2)

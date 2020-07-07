@@ -2295,7 +2295,6 @@ namespace expr
       inline Expr intConst (Expr name) { return fapp (intConstDecl (name)); }
       inline Expr realConst (Expr name) { return fapp (realConstDecl (name)); }
       inline Expr adtConst (Expr name) { return fapp (adtConstDecl (name)); }
-      
 
       inline bool isBoolConst (Expr v) { return isConst<BOOL_TY> (v); }
       inline bool isIntConst (Expr v) { return isConst<INT_TY> (v); }
@@ -2329,17 +2328,17 @@ namespace expr
         if (isOp<NumericOp>(v)) return typeOf(v->left());
         if (isOpX<ITE>(v)) return typeOf(v->last());
 
-        if (isOpX<STORE>(v)) return sort::arrayTy(v->right(), v->last());
+        if (isOpX<STORE>(v)) return sort::arrayTy(typeOf(v->right()), typeOf(v->last()));
         if (isOpX<SELECT>(v)) return typeOf(v->right());
-        if (isOpX<CONST_ARRAY>(v)) return sort::arrayTy(v->left(), v->right());
+        if (isOpX<CONST_ARRAY>(v)) return sort::arrayTy(v->left(), typeOf(v->right()));
 
-        std::cerr << "WARNING: could not infer type of: " << *v << "\n";
-        
-        assert (0 && "Unreachable");
-        return Expr();    
+//        std::cerr << "WARNING: could not infer type of: " << *v << "\n";
+//        assert (0 && "Unreachable");
+
+        return Expr();
       }
       inline Expr sortOf (Expr v) {return typeOf (v);}
-     
+
       struct FAPP_PS
       {
 	static inline void print (std::ostream &OS,
