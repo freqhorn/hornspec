@@ -7,6 +7,7 @@
 
 using namespace std;
 using namespace boost;
+using namespace expr::op::bind;
 namespace ufo
 {
 
@@ -462,7 +463,7 @@ namespace ufo
     Expr getDefaultAssignment(Expr var)
     {
       if (bind::isBoolConst(var)) return mk<TRUE>(efac);
-      if (bind::isIntConst(var)) return mkTerm (mpz_class (0), efac);
+      if (bind::isIntConst(var)) return mkMPZ(0, efac);
       else           // that is, isRealConst(var) == true
         return mkTerm (mpq_class (0), efac);
     }
@@ -473,10 +474,10 @@ namespace ufo
     Expr getPlusConst(Expr e, bool isInt, cpp_int c)
     {
       if (isOpX<MPZ>(e) && isInt)
-        return mkTerm (mpz_class (string (c + boost::lexical_cast<cpp_int> (e))), efac);
+        return mkMPZ(c + boost::lexical_cast<cpp_int> (e), efac);
       
-      Expr ce = isInt ? mkTerm (mpz_class (string(c)), efac) :
-                        mkTerm (mpq_class (string(c)), efac);
+      Expr ce = isInt ? mkMPZ(c, efac) :
+                        mkTerm (mpq_class (lexical_cast<string>(c)), efac);
       return mk<PLUS>(e, ce);
     }
     
@@ -704,7 +705,7 @@ namespace ufo
       }
     }
   };
-  
+
   /**
    * Simple wrapper
    */
@@ -714,16 +715,11 @@ namespace ufo
     SMTUtils u(efac);
     if (vars.size() == 0) return simplifyBool(cond);
 
-    if (containsOp<FORALL>(cond) || containsOp<EXISTS>(cond))
-      return mk<TRUE>(efac);
+    Expr newCond = simplifyArithm(simpleQE(cond, vars));
 
-    Expr newCond = simpleQE(cond, vars);
-    if (isNonlinear(newCond)) {
-      newCond = simpleQE(newCond, vars);
-      if (!u.implies(cond, newCond)) {
-        return mk<TRUE>(efac);
-      }
-    } else {
+    if (!emptyIntersect(newCond, vars) &&
+        !containsOp<FORALL>(cond) && !containsOp<EXISTS>(cond) && !isNonlinear(newCond))
+    {
       AeValSolver ae(mk<TRUE>(efac), newCond, vars); // exists quantified . formula
       if (ae.solve()) {
         newCond = ae.getValidSubset();
@@ -731,11 +727,27 @@ namespace ufo
         return mk<TRUE>(efac);
       }
     }
-    if (!emptyIntersect(newCond, vars)) // sanity check
+
+    ExprSet cnj;
+    getConj(newCond, cnj);
+    ineqMerger(cnj, true);
+
+    for (auto it = cnj.begin(); it != cnj.end(); )
     {
-      return mk<TRUE>(efac);
+      ExprVector av;
+      filter (*it, bind::IsConst (), inserter(av, av.begin()));
+      map<Expr, ExprVector> qv;
+      getQVars (*it, qv);
+      for (auto & a : qv)
+        for (auto & b : a.second)
+          for (auto it1 = av.begin(); it1 != av.end(); )
+            if (*it1 == b) { it1 = av.erase(it1); break; }
+            else ++it1;
+
+      if (emptyIntersect(av, vars)) ++it;
+        else it = cnj.erase(it);
     }
-    return simplifyBool(newCond);
+    return (conjoin(cnj, efac));
   };
 
   Expr abduce (Expr goal, Expr assm)

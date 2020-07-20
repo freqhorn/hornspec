@@ -49,6 +49,7 @@ DM-0002198
 #include <boost/pool/pool.hpp>
 #include <boost/pool/pool_alloc.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
 
 #define mk_it_range boost::make_iterator_range
 
@@ -2312,6 +2313,7 @@ namespace expr
           return rangeTy (v->left ());
         }
 
+        if (isOpX<ITE>(v)) return typeOf(v->last());
         if (isOp<BoolOp>(v) || isOp<ComparissonOp> (v)) return mk<BOOL_TY> (v->efac ());
         if (isOpX<MPZ> (v)) return mk<INT_TY> (v->efac ());
         if (isOpX<MPQ> (v)) return mk<REAL_TY> (v->efac ());
@@ -2326,18 +2328,27 @@ namespace expr
           return mk<REAL_TY> (v->efac ());
 
         if (isOp<NumericOp>(v)) return typeOf(v->left());
-        if (isOpX<ITE>(v)) return typeOf(v->last());
 
         if (isOpX<STORE>(v)) return sort::arrayTy(typeOf(v->right()), typeOf(v->last()));
         if (isOpX<SELECT>(v)) return typeOf(v->right());
         if (isOpX<CONST_ARRAY>(v)) return sort::arrayTy(v->left(), typeOf(v->right()));
 
-//        std::cerr << "WARNING: could not infer type of: " << *v << "\n";
-//        assert (0 && "Unreachable");
+//      std::cerr << "WARNING: could not infer type of: " << *v << "\n";
+//      assert (0 && "Unreachable");
 
         return Expr();
       }
       inline Expr sortOf (Expr v) {return typeOf (v);}
+
+      Expr mkMPZ(boost::multiprecision::cpp_int a, ExprFactory& efac)
+      {
+        return mkTerm (mpz_class (boost::lexical_cast<std::string>(a)), efac);
+      }
+
+      Expr mkMPZ(int a, ExprFactory& efac)
+      {
+        return mkTerm (mpz_class (a), efac);
+      }
 
       struct FAPP_PS
       {
@@ -2390,8 +2401,6 @@ namespace expr
         _args.insert (_args.end (), ++(fapp->args_begin ()), fapp->args_end ());
         return mknary<FAPP> (_args);
       }
-      
-      
     }
     
       

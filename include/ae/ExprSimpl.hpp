@@ -1,11 +1,11 @@
 #ifndef EXPRSIMPL__HPP__
 #define EXPRSIMPL__HPP__
 #include <assert.h>
-#include <boost/multiprecision/cpp_int.hpp>
 
 #include "ufo/Smt/EZ3.hh"
 
 using namespace std;
+using namespace expr::op::bind;
 using namespace boost;
 using namespace boost::multiprecision;
 
@@ -27,14 +27,14 @@ namespace ufo
 
   template<typename Range> static Expr mkplus(Range& terms, ExprFactory &efac){
     return
-      (terms.size() == 0) ? mkTerm (mpz_class (0), efac) :
+      (terms.size() == 0) ? mkMPZ (0, efac) :
       (terms.size() == 1) ? *terms.begin() :
       mknary<PLUS>(terms);
   }
 
   template<typename Range> static Expr mkmult(Range& terms, ExprFactory &efac){
     return
-      (terms.size() == 0) ? mkTerm (mpz_class (1), efac) :
+      (terms.size() == 0) ? mkMPZ (1, efac) :
       (terms.size() == 1) ? *terms.begin() :
       mknary<MULT>(terms);
   }
@@ -48,13 +48,13 @@ namespace ufo
 
   template<typename Range> static bool emptyIntersect(Expr a, Range& bv){
     ExprVector av;
-    filter (a, bind::IsConst (), inserter(av, av.begin()));
+    filter (a, IsConst (), inserter(av, av.begin()));
     return emptyIntersect(av, bv);
   }
 
   inline static bool emptyIntersect(Expr a, Expr b){
     ExprVector bv;
-    filter (b, bind::IsConst (), inserter(bv, bv.begin()));
+    filter (b, IsConst (), inserter(bv, bv.begin()));
     return emptyIntersect(a, bv);
   }
 
@@ -104,13 +104,13 @@ namespace ufo
 
   inline static bool isNumeric(Expr a)
   {
-    return bind::typeOf(a) == mk<INT_TY>(a->getFactory());
+    return typeOf(a) == mk<INT_TY>(a->getFactory());
   }
 
   inline static void findComplexNumerics (Expr a, ExprSet &terms)
   {
-    if (bind::isIntConst(a) || isOpX<MPZ>(a)) return;
-    if (isNumeric(a))
+    if (isIntConst(a) || isOpX<MPZ>(a)) return;
+    if (isNumeric(a) && !isOpX<ITE>(a))
     {
       bool hasNoNumeric = false;
       for (unsigned i = 0; i < a->arity(); i++)
@@ -150,7 +150,7 @@ namespace ufo
         getMultOps(a->arg(i), ops);
       }
     } else if (isOpX<UN_MINUS>(a) && isNumeric(a->left())){
-      ops.push_back(mkTerm (mpz_class (-1), a->getFactory()));
+      ops.push_back(mkMPZ ((-1), a->getFactory()));
       ops.push_back(a->left());
     } else {
       ops.push_back(a);
@@ -164,7 +164,7 @@ namespace ufo
     if (isOpX<MULT>(e)){
       return e;
     } else {
-      return mk<MULT>(mkTerm (mpz_class (1), e->getFactory()), e);
+      return mk<MULT>(mkMPZ (1, e->getFactory()), e);
     }
   }
 
@@ -249,7 +249,7 @@ namespace ufo
         }
       }
 
-      Expr num = mkTerm (mpz_class (string (-coef)), e->getFactory());
+      Expr num = mkMPZ (-coef, e->getFactory());
       if (rem.empty() || coef == 0) return num;
 
       Expr remTerm = mkmult(rem, e->getFactory());
@@ -283,7 +283,7 @@ namespace ufo
     }
     else if (isOpX<MPZ>(e))
     {
-      return mkTerm (mpz_class (string (-lexical_cast<cpp_int>(e))), e->getFactory());
+      return mkMPZ(-lexical_cast<cpp_int>(e), e->getFactory());
     }
     else if (isOpX<MPQ>(e)){
       string val = lexical_cast<string>(e);
@@ -297,7 +297,10 @@ namespace ufo
         return mkTerm (mpq_class (inv_val), e->getFactory());
       }
     }
-//    return mk<MULT>(mkTerm (mpz_class (-1), e->getFactory()), e);
+    else if (isOpX<ITE>(e)){
+      return mk<ITE>(e->left(), additiveInverse(e->right()), additiveInverse(e->last()));
+    }
+//    return mk<MULT>(mkMPZ ((-1), e->getFactory()), e);
     return mk<UN_MINUS>(e);
   }
 
@@ -305,30 +308,11 @@ namespace ufo
    * Commutativity in Addition
    */
   inline static Expr exprSorted(Expr e){
-    Expr res = e;
-    if (isOpX<PLUS>(e)) {
-      ExprSet expClauses;
-      for (auto it = e->args_begin(), end = e->args_end(); it != end; ++it){
-        expClauses.insert(*it);
-      }
-      res = mkplus(expClauses, e->getFactory());
-    }
-
-    if (isOpX<MULT>(e)) {
-      if (lexical_cast<string>(e->left())  == "-1"){
-        Expr l = e->right();
-
-        if (isOpX<PLUS>(l)) {
-          ExprSet expClauses;
-          for (auto it = l->args_begin(), end = l->args_end(); it != end; ++it){
-            expClauses.insert(additiveInverse(*it));
-          }
-          res = mkplus(expClauses, e->getFactory());
-        }
-      }
-    }
-
-    return res;
+    if (!isNumeric(e)) return e;
+    ExprVector addTrms;
+    getAddTerm(e, addTrms);
+    std::sort(addTrms.begin(), addTrms.end(), [](Expr& x, Expr& y) {return x < y;});
+    return mkplus(addTrms, e->getFactory());
   }
 
   /**
@@ -345,7 +329,7 @@ namespace ufo
         if (lexical_cast<cpp_int>(tmp->left()) > 0)
           return mk<T>(tmp, additiveInverse(e->right()));
 
-    if (bind::isIntConst(tmp) || bind::isRealConst(tmp))
+    if (isIntConst(tmp) || isRealConst(tmp))
       return mk<T>(tmp, additiveInverse(e->right()));
 
     return e;
@@ -401,11 +385,11 @@ namespace ufo
     r = mkplus(rhs, e->getFactory());
 
     if (coef == 0){
-      l = mkTerm (mpz_class (0), e->getFactory());
+      l = mkMPZ (0, e->getFactory());
     } else if (coef == 1){
       l = var;
     } else {
-      l = mk<MULT>(mkTerm (mpz_class (string(coef)), e->getFactory()), var);
+      l = mk<MULT>(mkMPZ(coef, e->getFactory()), var);
     }
 
     return mk<T>(l,r);
@@ -437,74 +421,28 @@ namespace ufo
    *  (a <= b && a >= b) -> (a == b)
    */
   inline static void ineqMerger(ExprSet& expClauses, bool clean = false){
-    for (auto &e: expClauses){
-      if (isOpX<LEQ>(e)){
-        for (auto &e2: expClauses){
-          if (isOpX<GEQ>(e2)){
-            if (e->left() == e2->left()){
-              Expr e1r = exprSorted(e->right());
-              Expr e2r = exprSorted(e2->right());
-              if ( e1r == e2r ){
-                if (clean){
-                  expClauses.erase(e);
-                  expClauses.erase(e2);
-                }
-                expClauses.insert(mk<EQ>(e->left(), e1r));
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   *  Merge adjacent inequalities
-   *  (a <= b && b <= a) -> (a == b)
-   */
-  template <typename T> static void ineqMergerSwap(ExprSet& expClauses, bool clean = false){
-    for (auto &e: expClauses){
-      if (isOpX<T>(e)){
-        for (auto &e2: expClauses){
-          if (isOpX<T>(e2)){
-            if (e->left() == e2->right() && e->right() == e2->left()){
+    vector<ExprSet::iterator> tmp;
+    ExprSet newClauses;
+    for (auto it1 = expClauses.begin(); it1 != expClauses.end(); ++it1){
+      if (isOpX<LEQ>(*it1)){
+        for (auto it2 = expClauses.begin(); it2 != expClauses.end(); ++it2){
+          if (isOpX<GEQ>(*it2)){
+            Expr e1l = exprSorted(mk<MINUS>((*it1)->left(), (*it1)->right()));
+            Expr e2l = exprSorted(mk<MINUS>((*it2)->left(), (*it2)->right()));
+            if ( e1l == e2l ){
+              newClauses.insert(mk<EQ>(e1l, mkMPZ(0, e1l->getFactory())));
               if (clean){
-                expClauses.erase(e);
-                expClauses.erase(e2);
-              }
-              expClauses.insert(mk<EQ>(e->left(), e->right()));
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   *  Merge adjacent inequalities
-   *  (a <= 0 && -a <= 0) -> (a == 0)
-   *  (a >= 0 && -a >= 0) -> (a == 0)
-   */
-  template <typename T> static void ineqMergerSwapMinus(ExprSet& expClauses, bool clean = false){
-    for (auto &e: expClauses){
-      if (isOpX<T>(e)){
-        for (auto &e2: expClauses){
-          if (isOpX<T>(e2)){
-            if (e->right() == e2->right() && e2->right() == mkTerm (mpz_class (0), e2->getFactory())){
-              Expr l1 = exprSorted(additiveInverse(e->left()));
-              Expr l2 = exprSorted(e2->left());
-              if (l1 == l2){
-                if (clean){
-                  expClauses.erase(e);
-                  expClauses.erase(e2);
-                }
-                expClauses.insert(mk<EQ>(e->left(), e->right()));
+                tmp.push_back (it1);
+                tmp.push_back (it2);
+                break;
               }
             }
           }
         }
       }
     }
+    for (auto & it : tmp) expClauses.erase(it);
+    expClauses.insert(newClauses.begin(), newClauses.end());
   }
 
   /**
@@ -612,7 +550,7 @@ namespace ufo
       for (Expr cl : cnjs)
         substsMap.insert(ineqSimplifier(v, cl));
 
-      if (merge) ineqMerger(substsMap);
+      if (merge) ineqMerger(substsMap, true);
       return conjoin(substsMap, v->getFactory());
     }
     else if (isOp<ComparissonOp>(exp))
@@ -793,7 +731,7 @@ namespace ufo
     cpp_int c = separateConst(plsOps);
     std::sort(plsOps.begin(), plsOps.end(), [](Expr& x, Expr& y) {return x < y;});
     // GF: to write some kind of a fold-operator that counts the numbers of occurences
-    if (c != 0) plsOps.push_back(mkTerm (mpz_class (string(c)), exp->getFactory()));
+    if (c != 0) plsOps.push_back(mkMPZ(c, exp->getFactory()));
     return mkplus(plsOps, exp->getFactory());
   }
 
@@ -814,7 +752,7 @@ namespace ufo
           rem.push_back(a);
       }
 
-      Expr num = mkTerm (mpz_class (string (coef)), e->getFactory());
+      Expr num = mkMPZ (coef, e->getFactory());
       if (rem.empty() || coef == 0) return num;
 
       Expr remTerm = mkmult(rem, e->getFactory());
@@ -839,7 +777,7 @@ namespace ufo
           coef *= lexical_cast<cpp_int>(a);
 
       if (coef % divider == 0)
-        return mkTerm (mpz_class (0), e->getFactory());
+        return mkMPZ (0, e->getFactory());
     }
     return e;
   }
@@ -936,8 +874,8 @@ namespace ufo
       }
     }
 
-    if (constLeft != 0) plusOpsLeft.push_back(mkTerm (mpz_class (string (constLeft)), efac));
-    if (constRight != 0) plusOpsRight.push_back(mkTerm (mpz_class (string (constRight)), efac));
+    if (constLeft != 0) plusOpsLeft.push_back(mkMPZ(constLeft, efac));
+    if (constRight != 0) plusOpsRight.push_back(mkMPZ(constRight, efac));
 
     if (plusOpsLeft.size() == 0 && plusOpsRight.size() == 0)
     {
@@ -965,7 +903,24 @@ namespace ufo
         return mk<FALSE>(efac);
     }
 
-    return reBuildCmp(exp, mkplus(plusOpsLeft, efac), mkplus(plusOpsRight, efac));
+    Expr l = mkplus(plusOpsLeft, efac);
+    Expr r = mkplus(plusOpsRight, efac);
+
+    // small ITE-optimization; to extend:
+    if (isOpX<EQ>(exp) && isOpX<ITE>(l) && isOpX<MPZ>(r) &&
+        isOpX<MPZ>(l->right()) && isOpX<MPZ>(l->last()) && l->right() != l->last())
+    {
+      if (l->right() == r) return l->left();
+      if (l->left() == r) return mkNeg(l->left());
+    }
+    else if (isOpX<EQ>(exp) && isOpX<ITE>(r) && isOpX<MPZ>(l) &&
+      isOpX<MPZ>(r->right()) && isOpX<MPZ>(r->last()) && r->right() != r->last())
+    {
+      if (r->right() == l) return r->left();
+      if (r->left() == l) return mkNeg(r->left());
+    }
+
+    return reBuildCmp(exp, l, r);
   }
 
   // GF: to rewrite/remove
@@ -1008,7 +963,7 @@ namespace ufo
     Expr ret = mk<MINUS>(a, b);
 
     if (a == b) {
-      ret = mkTerm (mpz_class (0), a->getFactory());
+      ret = mkMPZ (0, a->getFactory());
     } else
 
       if (isOpX<PLUS>(a)){
@@ -1029,22 +984,22 @@ namespace ufo
             } else
 
               if (isOpX<UN_MINUS>(b)) {
-                if (b->left() == mkTerm (mpz_class (0), a->getFactory())) {
+                if (b->left() == mkMPZ (0, a->getFactory())) {
                   ret = a;
                 } else {
                   ret = mk<PLUS>(a,b->left());
                 }
               } else
 
-                if (mkTerm (mpz_class (-1), a->getFactory()) == b) {
-                  ret = simplifiedPlus(a, mkTerm (mpz_class (1), a->getFactory()));
+                if (mkMPZ ((-1), a->getFactory()) == b) {
+                  ret = simplifiedPlus(a, mkMPZ (1, a->getFactory()));
                 } else
 
-                  if (b == mkTerm (mpz_class (0), a->getFactory())) {
+                  if (b == mkMPZ (0, a->getFactory())) {
                     ret = a;
                   } else
 
-                    if (a == mkTerm (mpz_class (0), a->getFactory())){
+                    if (a == mkMPZ (0, a->getFactory())){
                       if (isOpX<UN_MINUS>(b)){
                         ret = b->left();
                       }
@@ -1144,9 +1099,9 @@ namespace ufo
         if (isOpX<FALSE>(exp->right()))
           return mkNeg(exp->left());
 
-        return simplifyBool(mk<OR>(
-                 mkNeg(exp->left()),
-                 exp->right()));
+//        return simplifyBool(mk<OR>(
+//                 mkNeg(exp->left()),
+//                 exp->right()));
       }
 
       if (isOpX<EQ>(exp))
@@ -1314,7 +1269,7 @@ namespace ufo
 
       for (auto & c : splitted)
       {
-        if (bind::isBoolConst(c))
+        if (isBoolConst(c))
         {
           bool nothard = find(hardVars.begin(), hardVars.end(), c) == hardVars.end();
           if (nothard)
@@ -1330,7 +1285,7 @@ namespace ufo
             toInsert.insert(c);
           }
         }
-        else if (isOpX<NEG>(c) && bind::isBoolConst(c->left()))
+        else if (isOpX<NEG>(c) && isBoolConst(c->left()))
         {
           bool nothardLeft = find(hardVars.begin(), hardVars.end(), c->left()) == hardVars.end();
           if (nothardLeft)
@@ -1380,6 +1335,14 @@ namespace ufo
     }
   }
 
+  // is v1 a subset of v2?
+  template<typename Range1, typename Range2> static bool isSubset(Range1& v1, Range2& v2){
+    for (auto it = v1.begin(); it != v1.end(); ++it)
+      if (find(v2.begin(), v2.end(), *it) == v2.end())
+        return false;
+    return true;
+  }
+
   inline static bool isNumericConst(Expr e)
   {
     return isOpX<MPZ>(e) || isOpX<MPQ>(e);
@@ -1423,7 +1386,20 @@ namespace ufo
       ExprVector tmp;
       getAddTerm(a->left(), tmp);
       for (auto & t : tmp)
-        terms.push_back(additiveInverse(t));
+      {
+        bool toadd = true;
+        for (auto it = terms.begin(); it != terms.end(); )
+        {
+          if (*it == t)
+          {
+            terms.erase(it);
+            toadd = false;
+            break;
+          }
+          else ++it;
+        }
+        if (toadd) terms.push_back(additiveInverse(t));
+      }
     }
     else if (isOpX<MULT>(a))
     {
@@ -1431,9 +1407,20 @@ namespace ufo
       if (tmp == a) terms.push_back(a);
       else getAddTerm(tmp, terms);
     }
-    else
+    else if (lexical_cast<string>(a) != "0")
     {
-      terms.push_back(a);
+      bool found = false;
+      for (auto it = terms.begin(); it != terms.end(); )
+      {
+        if (additiveInverse(*it) == a)
+        {
+          terms.erase(it);
+          found = true;
+          break;
+        }
+        else ++it;
+      }
+      if (!found) terms.push_back(a);
     }
   }
 
@@ -1496,7 +1483,7 @@ namespace ufo
         for (auto & a : ops)
         {
           ExprVector av;
-          filter (a, bind::IsConst (), inserter(av, av.begin()));
+          filter (a, IsConst (), inserter(av, av.begin()));
           if (av.size() == 0)
           {
             linPart = linPart * lexical_cast<cpp_int>(a);
@@ -1518,19 +1505,19 @@ namespace ufo
           nonlinPart.push_back(a);
         }
 
-        if (linPart == 0) return mkTerm (mpz_class (0), t->getFactory());
+        if (linPart == 0) return mkMPZ (0, t->getFactory());
         if (nonlinPart.size() <= 1) return t;
 
         Expr multedVars = mkmult(nonlinPart, t->getFactory());
         if (extraVars[multedVars] == NULL)
         {
           Expr new_name = mkTerm<string> ("__e__" + to_string(extraVars.size()), t->getFactory());
-          Expr var = bind::intConst(new_name);
+          Expr var = intConst(new_name);
           extraVars[multedVars] = var;
         }
 
         if (linPart == 1) return extraVars[multedVars];
-        else return mk<MULT>( mkTerm (mpz_class (string(linPart)), t->getFactory()), extraVars[multedVars]);
+        else return mk<MULT>( mkMPZ(linPart, t->getFactory()), extraVars[multedVars]);
       }
       else if (isOpX<MOD>(t) || isOpX<IDIV>(t) || isOpX<DIV>(t))
       {
@@ -1542,12 +1529,12 @@ namespace ufo
         if (indr >= 0) key = replaceAll(key, t->right(), vars[indr]);
 
         if (isOpX<MPZ>(t->left()) && lexical_cast<cpp_int>(t->left()) == 0)
-          return mkTerm (mpz_class (0), t->getFactory());
+          return mkMPZ (0, t->getFactory());
 
         if (extraVars[key] == NULL)
         {
           Expr new_name = mkTerm<string> ("__e__" + to_string(extraVars.size()), t->getFactory());
-          Expr var = bind::intConst(new_name);
+          Expr var = intConst(new_name);
           extraVars[key] = var;
         }
         return extraVars[key];
@@ -1581,7 +1568,7 @@ namespace ufo
         for (unsigned j = 0; j < exp->arity(); j++)
         {
           Expr q = exp->arg(j);
-          if (bind::isIntConst(q)) v++;     // GF: a simple counter, to extend
+          if (isIntConst(q)) v++;     // GF: a simple counter, to extend
         }
 
         if (v > 1)
@@ -1597,34 +1584,6 @@ namespace ufo
   inline bool findNonlin (Expr e1)
   {
     FindNonlin fn;
-    dagVisit (fn, e1);
-    return fn.found;
-  }
-
-  struct FindArray : public std::unary_function<Expr, VisitAction>
-  {
-    bool found;
-
-    FindArray () : found (false) {}
-
-    VisitAction operator() (Expr exp)
-    {
-      if (found)
-      {
-        return VisitAction::skipKids ();
-      }
-      else if (bind::isConst<ARRAY_TY> (exp))
-      {
-        found = true;
-        return VisitAction::skipKids ();
-      }
-      return VisitAction::doKids ();
-    }
-  };
-
-  inline bool findArray (Expr e1)
-  {
-    FindArray fn;
     dagVisit (fn, e1);
     return fn.found;
   }
@@ -1664,7 +1623,7 @@ namespace ufo
     int maxConjs = 0;
     ExprSet disjs;
     getDisj(exp, disjs);
-    if (disjs.size() == 1)
+    if (disjs.size() <= 1)
       return disjoin(disjs, exp->getFactory());
 
     vector<ExprSet> dconjs;
@@ -1705,24 +1664,23 @@ namespace ufo
 
   inline static Expr cloneVar(Expr var, Expr new_name) // ... and give a new_name to the clone
   {
-    if (bind::isIntConst(var))
-      return bind::intConst(new_name);
-    else if (bind::isRealConst(var))
-      return bind::realConst(new_name);
-    else if (bind::isBoolConst(var))
-      return bind::boolConst(new_name);
-    else if (bind::isConst<ARRAY_TY> (var))
-      return bind::mkConst(new_name, mk<ARRAY_TY> (
+    if (isIntConst(var))
+      return intConst(new_name);
+    else if (isRealConst(var))
+      return realConst(new_name);
+    else if (isBoolConst(var))
+      return boolConst(new_name);
+    else if (isConst<ARRAY_TY> (var))
+      return mkConst(new_name, mk<ARRAY_TY> (
              mk<INT_TY> (new_name->getFactory()),
              mk<INT_TY> (new_name->getFactory()))); // GF: currently, only Arrays over Ints
 
     else return NULL;
   }
 
-  inline static bool hasBoolSort(Expr e)
+  inline static bool isBool(Expr e)
   {
-    if (bind::isBoolConst(e) || isOp<BoolOp>(e)) return true;
-    return false;
+    return typeOf(e) == mk<BOOL_TY>(e->getFactory());
   }
 
   inline static Expr convertToGEandGT(Expr fla)
@@ -1738,7 +1696,7 @@ namespace ufo
 
     if (isOpX<EQ>(fla))
     {
-      if (hasBoolSort(lhs)) return
+      if (isBool(lhs)) return
           mk<OR>(mk<AND>(lhs, rhs),
                  mk<AND>(mkNeg(lhs), mkNeg(rhs)));
       else if (isNumeric(lhs)) return mk<AND>(
@@ -1748,7 +1706,7 @@ namespace ufo
 
     if (isOpX<NEQ>(fla))
     {
-      if (hasBoolSort(lhs)) return
+      if (isBool(lhs)) return
           mk<OR>(mk<AND>(lhs, mkNeg(rhs)),
                  mk<AND>(mkNeg(lhs), rhs));
       else if (isNumeric(lhs)) return mk<OR>(
@@ -1858,7 +1816,7 @@ namespace ufo
 
   inline static Expr unfoldITE(Expr term)
   {
-    if (isOpX<ITE>(term))
+    if (isOpX<ITE>(term) && isBool (term->last()))
     {
       Expr iteCond = unfoldITE (term->arg(0));
       Expr iteC1 = unfoldITE (term->arg(1));
@@ -2185,7 +2143,7 @@ namespace ufo
       if (isOpX<SELECT>(exp))
       {
         if (sels[exp] != NULL) return sels[exp];
-        Expr repl = bind::intConst(mkTerm<string> ("sel_" + lexical_cast<string>(sels.size()), exp->getFactory()));
+        Expr repl = intConst(mkTerm<string> ("sel_" + lexical_cast<string>(sels.size()), exp->getFactory()));
         sels[exp] = repl;
         return repl;
       }
@@ -2211,7 +2169,7 @@ namespace ufo
       {
         for (int i = 0; i < exp->arity() - 1; i++)
         {
-          vars.insert(bind::fapp(exp->arg(i)));
+          vars.insert(fapp(exp->arg(i)));
         }
       }
       return VisitAction::doKids ();
@@ -2255,8 +2213,12 @@ namespace ufo
         {
           normalized = simplifyArithm(
             mk<EQ>(mk<PLUS>(cnj->arg(0), additiveInverse(cnj->arg(1))),
-              mkTerm (mpz_class (0), efac)));
+              mkMPZ (0, efac)));
           normalized = ineqSimplifier(var, normalized);
+        }
+        else if (var == normalized->right())
+        {
+          normalized = mk<EQ>(normalized->right(), normalized->left());
         }
 
         // after the normalization, var can be eliminated
@@ -2274,7 +2236,7 @@ namespace ufo
           else if (isOpX<MULT>(normalized->left()) && isOpX<MPZ>(normalized->left()->left()))
           {
             cnjs.push_back(mk<EQ>(mk<MOD>(normalized->right(), normalized->left()->left()),
-                               mkTerm (mpz_class (0), efac)));
+                               mkMPZ (0, efac)));
           }
         }
 
@@ -2288,12 +2250,22 @@ namespace ufo
       if (eqs.empty()) continue;
 
       Expr repl = *eqs.begin();
-      int min_sz = INT_MAX;
+      bool no_qv = emptyIntersect(repl, quantified);
+      int min_sz = treeSize(repl);
+      int is_const = isOpX<MPZ>(repl);
 
-      // first, search for a non-constant replacement, if possible
-      for (auto cnj = std::next(eqs.begin()); cnj != eqs.end(); cnj++)
-        if (treeSize(*cnj) < min_sz && !isOpX<MPZ>(*cnj))
-          { repl = *cnj; min_sz = treeSize(*cnj); }
+      // first, search for a non-constant replacement without quantified vars, if possible
+      for (auto cnj = std::next(eqs.begin()); cnj != eqs.end(); cnj++) {
+        bool no_qv_cur = emptyIntersect(*cnj, quantified);
+        int sz_cur = treeSize(*cnj);
+        int is_const_cur = isOpX<MPZ>(*cnj);
+        if (no_qv < no_qv_cur || (no_qv_cur && is_const) || (sz_cur < min_sz && !is_const_cur)) {
+          repl = *cnj;
+          min_sz = sz_cur;
+          no_qv = no_qv_cur;
+          is_const = is_const_cur;
+        }
+      }
 
       // second, make sure that all replacements are equal
       for (auto cnj = eqs.begin(); cnj != eqs.end(); cnj++)
@@ -2368,7 +2340,7 @@ namespace ufo
     if (isNumericConst(term)) {
       return false;
     }
-    else if (bind::isIntConst(term)) {
+    else if (isIntConst(term)) {
       return true;
     }
     else if (isOpX<MULT>(term)) {
@@ -2386,6 +2358,49 @@ namespace ufo
       return res;
     }
     return false;
+  }
+
+  void mergeDiseqs(ExprSet& cnjs) {
+    // GF: to test better
+    map <Expr, set<cpp_int>> tmp;
+    ExprSet newCnjs;
+    for (auto & c : cnjs) {
+      if (!isOpX<NEQ>(c) || !isOpX<MPZ>(c->right()))
+        newCnjs.insert(c);
+      else
+        tmp[c->left()].insert(lexical_cast<cpp_int>(c->right()));
+    }
+
+    for (auto & a : tmp) {
+      Expr lin_com = a.first;
+      set<cpp_int>& all_diseqs = a.second;
+      ExprFactory& efac = lin_com->getFactory();
+
+      // GF: to merge (maybe) with simplifyArithmConjunctions
+      bool init = true;
+      cpp_int first;
+      cpp_int second;
+      vector<pair<cpp_int, cpp_int>> pairs;
+      for (auto c : all_diseqs) {
+        if (!init && c == second + 1)
+        second = c;
+        else {
+          if (init) init = false;
+          else pairs.push_back(make_pair(first, second));
+          first = c;
+          second = c;
+        }
+      }
+      pairs.push_back(make_pair(first, second)); // last one
+      for (auto p : pairs) {
+//        if (p.first == p.second)
+//          newCnjs.insert (mk<NEQ>(lin_com, mkMPZ (p.first, efac)));
+//        else
+        newCnjs.insert(mk<OR>(mk<LT>(lin_com, mkMPZ (p.first, efac)),
+                              mk<GT>(lin_com, mkMPZ (p.second, efac))));
+      }
+    }
+    cnjs = newCnjs;
   }
 
   // similar to simplifyArithmDisjunctions
@@ -2407,8 +2422,11 @@ namespace ufo
 
       Expr tmp = simplifyArithm(
         reBuildCmp(d, mk<PLUS>(d->arg(0), additiveInverse(d->arg(1))),
-                   mkTerm (mpz_class (0), efac)));
+                   mkMPZ (0, efac)));
       tmp = ineqReverter(tmp);
+
+      if (isOpX<TRUE>(tmp)) continue;
+      if (isOpX<FALSE>(tmp)) return tmp;
 
       newCnjs.insert(tmp);
       lin_coms.insert(tmp->arg(0));
@@ -2478,11 +2496,11 @@ namespace ufo
             if (*it == cur_min_le) {
               cur_min_le--;
               if (keep_redundand)
-                newCnjs.insert(mk<LEQ>(lin_com, mkTerm (mpz_class (string (cur_min_le)), efac)));
+                newCnjs.insert(mk<LEQ>(lin_com, mkMPZ (cur_min_le, efac)));
               it = all_diseqs.erase(it);
             } else if (*it > cur_min_le) { // remove redundand, e.g., (x != 7 /\ x <= 5)
               if (keep_redundand)
-                newCnjs.insert(mk<LEQ>(lin_com, mkTerm (mpz_class (string (*it)), efac)));
+                newCnjs.insert(mk<LEQ>(lin_com, mkMPZ (*it, efac)));
               it = all_diseqs.erase(it);
             }
             else ++it;
@@ -2497,11 +2515,11 @@ namespace ufo
             if (*it == cur_min_lt - 1) {
               cur_min_lt--;
               if (keep_redundand)
-                newCnjs.insert(mk<LT>(lin_com, mkTerm (mpz_class (string (cur_min_lt)), efac)));
+                newCnjs.insert(mk<LT>(lin_com, mkMPZ (cur_min_lt, efac)));
               it = all_diseqs.erase(it);
             } else if (*it >= cur_min_lt) {  // remove redundand, e.g., (x != 5 /\ x < 5)
               if (keep_redundand)
-                newCnjs.insert(mk<LT>(lin_com, mkTerm (mpz_class (string (*it)), efac)));
+                newCnjs.insert(mk<LT>(lin_com, mkMPZ (*it, efac)));
               it = all_diseqs.erase(it);
             }
             else ++it;
@@ -2516,11 +2534,11 @@ namespace ufo
             if (*it == cur_max_ge) {
               cur_max_ge++;
               if (keep_redundand)
-                newCnjs.insert(mk<GEQ>(lin_com, mkTerm (mpz_class (string (cur_max_ge)), efac)));
+                newCnjs.insert(mk<GEQ>(lin_com, mkMPZ (cur_max_ge, efac)));
               it = all_diseqs.erase(it);
             } else if (*it < cur_max_ge) { // remove redundand, e.g., (x != 4 /\ x >= 5)
               if (keep_redundand)
-                newCnjs.insert(mk<GEQ>(lin_com, mkTerm (mpz_class (string (*it)), efac)));
+                newCnjs.insert(mk<GEQ>(lin_com, mkMPZ (*it, efac)));
               it = all_diseqs.erase(it);
             }
             else ++it;
@@ -2535,11 +2553,11 @@ namespace ufo
             if (*it == cur_max_gt + 1) {
               cur_max_gt++;
               if (keep_redundand)
-                newCnjs.insert(mk<GT>(lin_com, mkTerm (mpz_class (string (cur_max_gt)), efac)));
+                newCnjs.insert(mk<GT>(lin_com, mkMPZ (cur_max_gt, efac)));
               it = all_diseqs.erase(it);
             } else if (*it <= cur_max_gt) { // remove redundand, e.g., (x != 5 /\ x > 5)
               if (keep_redundand)
-                newCnjs.insert(mk<GT>(lin_com, mkTerm (mpz_class (string (*it)), efac)));
+                newCnjs.insert(mk<GT>(lin_com, mkMPZ (*it, efac)));
               it = all_diseqs.erase(it);
             }
             else ++it;
@@ -2548,7 +2566,7 @@ namespace ufo
         }
 
       for (auto c : all_diseqs) {
-        newCnjs.insert (mk<NEQ>(lin_com, mkTerm (mpz_class (string (c)), efac)));
+        newCnjs.insert (mk<NEQ>(lin_com, mkMPZ (c, efac)));
       }
 
       if ((cur_max_gt_bl && cur_min_lt_bl && cur_max_gt >= cur_min_lt - 1) || // e.g., (x > 3 /\ x < 4)
@@ -2559,63 +2577,63 @@ namespace ufo
 
       if (cur_max_ge_bl && cur_min_le_bl && cur_max_ge == cur_min_le && newCnjs.empty())
       {
-        Expr res = mk<EQ>(lin_com, mkTerm (mpz_class (string (cur_min_le)), efac));
+        Expr res = mk<EQ>(lin_com, mkMPZ (cur_min_le, efac));
         if (keep_redundand) newCnjs.insert(res);
         else return res;
       }
 
       if (cur_max_gt_bl && cur_min_le_bl && cur_max_gt + 1 == cur_min_le && newCnjs.empty())
       {
-        Expr res = mk<EQ>(lin_com, mkTerm (mpz_class (string (cur_min_le)), efac));
+        Expr res = mk<EQ>(lin_com, mkMPZ (cur_min_le, efac));
         if (keep_redundand) newCnjs.insert(res);
         else return res;
       }
 
       if (cur_max_ge_bl && cur_min_lt_bl && cur_max_ge + 1 == cur_min_lt && newCnjs.empty())
       {
-        Expr res = mk<EQ>(lin_com, mkTerm (mpz_class (string (cur_max_ge)), efac));
+        Expr res = mk<EQ>(lin_com, mkMPZ (cur_max_ge, efac));
         if (keep_redundand) newCnjs.insert(res);
         else return res;
       }
 
       if (cur_max_gt_bl && cur_min_lt_bl && cur_max_gt + 2 == cur_min_lt && newCnjs.empty())
       {
-        Expr res = mk<EQ>(lin_com, mkTerm (mpz_class (string (cur_max_gt + 1)), efac));
+        Expr res = mk<EQ>(lin_com, mkMPZ (cur_max_gt + 1, efac));
         if (keep_redundand) newCnjs.insert(res);
         else return res;
       }
 
       if (cur_min_le_bl && cur_min_lt_bl) {
         if (cur_min_le >= cur_min_lt) {
-          newCnjs.insert(mk<LT>(lin_com, mkTerm (mpz_class (string (cur_min_lt)), efac)));
+          newCnjs.insert(mk<LT>(lin_com, mkMPZ (cur_min_lt, efac)));
         }
         else {
-          newCnjs.insert(mk<LEQ>(lin_com, mkTerm (mpz_class (string (cur_min_le)), efac)));
+          newCnjs.insert(mk<LEQ>(lin_com, mkMPZ (cur_min_le, efac)));
         }
       }
       else {
         if (cur_min_le_bl) {
-          newCnjs.insert(mk<LEQ>(lin_com, mkTerm (mpz_class (string (cur_min_le)), efac)));
+          newCnjs.insert(mk<LEQ>(lin_com, mkMPZ (cur_min_le, efac)));
         }
         if (cur_min_lt_bl) {
-          newCnjs.insert(mk<LT>(lin_com, mkTerm (mpz_class (string (cur_min_lt)), efac)));
+          newCnjs.insert(mk<LT>(lin_com, mkMPZ (cur_min_lt, efac)));
         }
       }
 
       if (cur_max_ge_bl && cur_max_gt_bl) {
         if (cur_max_ge <= cur_max_gt) {    // e.g., x > 5 /\ x >= 5
-          newCnjs.insert(mk<GT>(lin_com, mkTerm (mpz_class (string (cur_max_gt)), efac)));
+          newCnjs.insert(mk<GT>(lin_com, mkMPZ (cur_max_gt, efac)));
         }
         else {
-          newCnjs.insert(mk<GEQ>(lin_com, mkTerm (mpz_class (string (cur_max_ge)), efac)));
+          newCnjs.insert(mk<GEQ>(lin_com, mkMPZ (cur_max_ge, efac)));
         }
       }
       else {
         if (cur_max_ge_bl) {
-          newCnjs.insert(mk<GEQ>(lin_com, mkTerm (mpz_class (string (cur_max_ge)), efac)));
+          newCnjs.insert(mk<GEQ>(lin_com, mkMPZ (cur_max_ge, efac)));
         }
         if (cur_max_gt_bl) {
-          newCnjs.insert(mk<GT>(lin_com, mkTerm (mpz_class (string (cur_max_gt)), efac)));
+          newCnjs.insert(mk<GT>(lin_com, mkMPZ (cur_max_gt, efac)));
         }
       }
     }
@@ -2643,8 +2661,11 @@ namespace ufo
       }
 
       Expr tmp = simplifyArithm(
-          reBuildCmp(d, mk<PLUS>(d->arg(0), additiveInverse(d->arg(1))),
-                     mkTerm (mpz_class (0), efac)));
+          reBuildCmp(d, mk<PLUS>(d->arg(0), additiveInverse(d->arg(1))), mkMPZ (0, efac)));
+
+      if (isOpX<TRUE>(tmp)) return tmp;
+      if (isOpX<FALSE>(tmp)) continue;
+
       tmp = ineqReverter(tmp);
       newDsjs.insert(tmp);
       lin_coms.insert(tmp->arg(0));
@@ -2714,11 +2735,11 @@ namespace ufo
             if (*it == cur_max_le + 1) {
               cur_max_le++;
               if (keep_redundand)
-                newDsjs.insert(mk<LEQ>(lin_com, mkTerm (mpz_class (string (cur_max_le)), efac)));
+                newDsjs.insert(mk<LEQ>(lin_com, mkMPZ (cur_max_le, efac)));
               it = all_eqs.erase(it);
             } else if (*it <= cur_max_le) { // remove redundand, e.g., (x = 3 \/ x <= 5)
               if (keep_redundand)
-                newDsjs.insert(mk<LEQ>(lin_com, mkTerm (mpz_class (string (*it)), efac)));
+                newDsjs.insert(mk<LEQ>(lin_com, mkMPZ (*it, efac)));
               it = all_eqs.erase(it);
             }
             else ++it;
@@ -2733,11 +2754,11 @@ namespace ufo
             if (*it == cur_max_lt) {
               cur_max_lt++;
               if (keep_redundand)
-                newDsjs.insert(mk<LT>(lin_com, mkTerm (mpz_class (string (cur_max_lt)), efac)));
+                newDsjs.insert(mk<LT>(lin_com, mkMPZ (cur_max_lt, efac)));
               it = all_eqs.erase(it);
             } else if (*it < cur_max_lt) {  // remove redundand, e.g., (x = 4 \/ x < 5)
               if (keep_redundand)
-                newDsjs.insert(mk<LT>(lin_com, mkTerm (mpz_class (string (*it)), efac)));
+                newDsjs.insert(mk<LT>(lin_com, mkMPZ (*it, efac)));
               it = all_eqs.erase(it);
             }
             else ++it;
@@ -2752,11 +2773,11 @@ namespace ufo
             if (*it == cur_min_ge - 1) {
               cur_min_ge--;
               if (keep_redundand)
-                newDsjs.insert(mk<GEQ>(lin_com, mkTerm (mpz_class (string (cur_min_ge)), efac)));
+                newDsjs.insert(mk<GEQ>(lin_com, mkMPZ (cur_min_ge, efac)));
               it = all_eqs.erase(it);
             } else if (*it >= cur_min_ge) { // remove redundand, e.g., (x = 9 \/ x >= 5)
               if (keep_redundand)
-                newDsjs.insert(mk<GEQ>(lin_com, mkTerm (mpz_class (string (*it)), efac)));
+                newDsjs.insert(mk<GEQ>(lin_com, mkMPZ (*it, efac)));
               it = all_eqs.erase(it);
             }
             else ++it;
@@ -2771,11 +2792,11 @@ namespace ufo
             if (*it == cur_min_gt) {
               cur_min_gt--;
               if (keep_redundand)
-                newDsjs.insert(mk<GT>(lin_com, mkTerm (mpz_class (string (cur_min_gt)), efac)));
+                newDsjs.insert(mk<GT>(lin_com, mkMPZ (cur_min_gt, efac)));
               it = all_eqs.erase(it);
             } else if (*it > cur_min_gt) { // remove redundand, e.g., (x = 6 \/ x > 5)
               if (keep_redundand)
-                newDsjs.insert(mk<GT>(lin_com, mkTerm (mpz_class (string (*it)), efac)));
+                newDsjs.insert(mk<GT>(lin_com, mkMPZ (*it, efac)));
               it = all_eqs.erase(it);
             }
             else ++it;
@@ -2784,7 +2805,7 @@ namespace ufo
         }
 
       for (auto c : all_eqs) {
-        newDsjs.insert (mk<EQ>(lin_com, mkTerm (mpz_class (string (c)), efac)));
+        newDsjs.insert (mk<EQ>(lin_com, mkMPZ (c, efac)));
       }
 
       if ((cur_min_gt_bl && cur_max_lt_bl && cur_min_gt <= cur_max_lt - 1) ||
@@ -2795,63 +2816,63 @@ namespace ufo
 
       if (cur_min_gt_bl && cur_max_lt_bl && cur_min_gt == cur_max_lt && newDsjs.empty())
       {
-        Expr res = mk<NEQ>(lin_com, mkTerm (mpz_class (string (cur_max_lt)), efac));
+        Expr res = mk<NEQ>(lin_com, mkMPZ (cur_max_lt, efac));
         if (keep_redundand) newDsjs.insert(res);
         else return res;
       }
 
       if (cur_min_ge_bl && cur_max_lt_bl && cur_min_ge - 1 == cur_max_lt && newDsjs.empty())
       {
-        Expr res = mk<NEQ>(lin_com, mkTerm (mpz_class (string (cur_max_lt)), efac));
+        Expr res = mk<NEQ>(lin_com, mkMPZ (cur_max_lt, efac));
         if (keep_redundand) newDsjs.insert(res);
         else return res;
       }
 
       if (cur_min_gt_bl && cur_max_le_bl && cur_min_gt - 1 == cur_max_le && newDsjs.empty())
       {
-        Expr res = mk<NEQ>(lin_com, mkTerm (mpz_class (string (cur_min_gt)), efac));
+        Expr res = mk<NEQ>(lin_com, mkMPZ (cur_min_gt, efac));
         if (keep_redundand) newDsjs.insert(res);
         else return res;
       }
 
       if (cur_min_ge_bl && cur_max_le_bl && cur_min_ge - 2 == cur_max_le && newDsjs.empty())
       {
-        Expr res = mk<NEQ>(lin_com, mkTerm (mpz_class (string (cur_min_ge - 1)), efac));
+        Expr res = mk<NEQ>(lin_com, mkMPZ (cur_min_ge - 1, efac));
         if (keep_redundand) newDsjs.insert(res);
         else return res;
       }
 
       if (cur_max_le_bl && cur_max_lt_bl) {
         if (cur_max_le >= cur_max_lt) {
-          newDsjs.insert(mk<LEQ>(lin_com, mkTerm (mpz_class (string (cur_max_le)), efac)));
+          newDsjs.insert(mk<LEQ>(lin_com, mkMPZ (cur_max_le, efac)));
         }
         else {
-          newDsjs.insert(mk<LT>(lin_com, mkTerm (mpz_class (string (cur_max_lt)), efac)));
+          newDsjs.insert(mk<LT>(lin_com, mkMPZ (cur_max_lt, efac)));
         }
       }
       else {
         if (cur_max_le_bl) {
-          newDsjs.insert(mk<LEQ>(lin_com, mkTerm (mpz_class (string (cur_max_le)), efac)));
+          newDsjs.insert(mk<LEQ>(lin_com, mkMPZ (cur_max_le, efac)));
         }
         if (cur_max_lt_bl) {
-          newDsjs.insert(mk<LT>(lin_com, mkTerm (mpz_class (string (cur_max_lt)), efac)));
+          newDsjs.insert(mk<LT>(lin_com, mkMPZ (cur_max_lt, efac)));
         }
       }
 
       if (cur_min_ge_bl && cur_min_gt_bl) {
         if (cur_min_ge <= cur_min_gt) {
-          newDsjs.insert(mk<GEQ>(lin_com, mkTerm (mpz_class (string (cur_min_ge)), efac)));
+          newDsjs.insert(mk<GEQ>(lin_com, mkMPZ (cur_min_ge, efac)));
         }
         else {
-          newDsjs.insert(mk<GT>(lin_com, mkTerm (mpz_class (string (cur_min_gt)), efac)));
+          newDsjs.insert(mk<GT>(lin_com, mkMPZ (cur_min_gt, efac)));
         }
       }
       else {
         if (cur_min_ge_bl) {
-          newDsjs.insert(mk<GEQ>(lin_com, mkTerm (mpz_class (string (cur_min_ge)), efac)));
+          newDsjs.insert(mk<GEQ>(lin_com, mkMPZ (cur_min_ge, efac)));
         }
         if (cur_min_gt_bl) {
-          newDsjs.insert(mk<GT>(lin_com, mkTerm (mpz_class (string (cur_min_gt)), efac)));
+          newDsjs.insert(mk<GT>(lin_com, mkMPZ (cur_min_gt, efac)));
         }
       }
     }
@@ -2861,7 +2882,7 @@ namespace ufo
 
   inline static Expr normalizeAtom(Expr fla, ExprVector& intVars)
   {
-    if (isOp<ComparissonOp>(fla))
+    if (isOp<ComparissonOp>(fla) && isNumeric(fla->left()))
     {
       Expr lhs = fla->left();
       Expr rhs = fla->right();
@@ -2938,7 +2959,7 @@ namespace ufo
             ++it;
           }
         }
-        if (coef != 0) newlhs.insert(mk<MULT>(mkTerm (mpz_class (string(coef)), fla->getFactory()), v));
+        if (coef != 0) newlhs.insert(mk<MULT>(mkMPZ(coef, fla->getFactory()), v));
       }
 
       bool success = true;
@@ -2978,7 +2999,7 @@ namespace ufo
       if (success)
       {
         Expr pl = (newlhs.size() == 1) ? *newlhs.begin(): mknary<PLUS>(newlhs);
-        Expr c = mkTerm (mpz_class (string (-intconst)), fla->getFactory());
+        Expr c = mkMPZ (-intconst, fla->getFactory());
         return reBuildCmp(fla, pl, c);
       }
     }
@@ -2999,9 +3020,27 @@ namespace ufo
     return disjoin(newDisjs, exp->getFactory());
   }
 
+  inline static Expr normalize(Expr fla)
+  {
+    ExprVector vars;
+    filter (fla, IsConst (), inserter(vars, vars.begin()));
+    if (isOpX<AND>(fla) || isOpX<OR>(fla))
+    {
+      ExprSet args;
+      for (int i = 0; i < fla->arity(); i++){
+        args.insert(normalizeAtom(fla->arg(i), vars));
+      }
+
+      return simplifyBool(isOpX<AND>(fla) ? conjoin (args, fla->getFactory()) :
+        disjoin (args, fla->getFactory()));
+    }
+    return normalizeAtom(fla, vars);
+  }
+
   inline static bool getLinCombCoefs(Expr ex, set<cpp_int>& intCoefs)
   {
     bool res = true;
+    if (isOpX<TRUE>(ex)) return false;
     if (isOpX<OR>(ex))
     {
       for (auto it = ex->args_begin (), end = ex->args_end (); it != end; ++it)
@@ -3009,55 +3048,48 @@ namespace ufo
     }
     else if (isOp<ComparissonOp>(ex)) // assuming the lin.combination is on the left side
     {
-      Expr lhs = ex->left();
-      if (isOpX<PLUS>(lhs))
+      if (!isOpX<MPZ>(ex->right())) return false;
+      ExprVector addt;
+      getAddTerm (ex->left(), addt);
+      for (auto & t : addt)
       {
-        for (auto it = lhs->args_begin (), end = lhs->args_end (); it != end; ++it)
-        {
-          if (isOpX<MULT>(*it))           // else, it is 1, and we will add it anyway;
-          {
-            if (isOpX<MPZ>((*it)->left()))
-              intCoefs.insert(lexical_cast<cpp_int> ((*it)->left()));
-            else return false;
-          }
-        }
-      }
-      else if (isOpX<MULT>(lhs))
-      {
-        if (isOpX<MPZ>(lhs->left()))
-          intCoefs.insert(lexical_cast<cpp_int> (lhs->left()));
+        if (isOpX<MULT>(t) && t->arity() == 2 &&
+            isOpX<MPZ>(t->left()) && !isOpX<MPZ>(t->right()))
+          intCoefs.insert(lexical_cast<cpp_int> (t->left()));
         else return false;
-      }
-      else
-      {
-        return false;
       }
     }
     return res;
   }
 
-  inline static void getLinCombConsts(Expr ex, set<cpp_int>& intConsts)
+  inline static bool getLinCombConsts(Expr ex, set<cpp_int>& intConsts)
   {
     if (isOpX<OR>(ex))
     {
+      bool res = true;
       for (auto it = ex->args_begin (), end = ex->args_end (); it != end; ++it)
-        getLinCombConsts(*it, intConsts);
-      }
+        res &= getLinCombConsts(*it, intConsts);
+      return res;
+    }
     else if (isOp<ComparissonOp>(ex)) // assuming the lin.combination is on the left side
     {
-      intConsts.insert(lexical_cast<cpp_int> (ex->right()));
+      if (isOpX<MPZ>(ex->right()))
+        intConsts.insert(lexical_cast<cpp_int> (ex->right()));
+      else
+        return false;
     }
+    return true;
   }
 
   inline static void normalizeSelects(Expr& body)
   {
     ExprVector se;
-    filter (body, bind::IsSelect (), inserter(se, se.begin()));
+    filter (body, IsSelect (), inserter(se, se.begin()));
     for (auto & s : se)
     {
-      if (!bind::isIntConst(s->right()))
+      if (!isIntConst(s->right()))
       {
-        Expr var_it = bind::intConst(mkTerm<string> ("it_" + lexical_cast<string>(&s), body->getFactory()));
+        Expr var_it = intConst(mkTerm<string> ("it_" + lexical_cast<string>(&s), body->getFactory()));
         body = mk<AND>(replaceInSubexpr(body, s, s->right(), var_it), mk<EQ>(s->right(), var_it));
       }
     }
@@ -3066,7 +3098,7 @@ namespace ufo
   inline static void uniqueizeSelects(Expr& body)
   {
     ExprVector se;
-    filter (body, bind::IsSelect (), inserter(se, se.begin()));
+    filter (body, IsSelect (), inserter(se, se.begin()));
     if (se.size() < 2) return;
 
     ExprSet seenIterators;
@@ -3078,7 +3110,7 @@ namespace ufo
       }
       else
       {
-        Expr var_it = bind::intConst(mkTerm<string> ("it_" + lexical_cast<string>(&s), body->getFactory()));
+        Expr var_it = intConst(mkTerm<string> ("it_" + lexical_cast<string>(&s), body->getFactory()));
         body = mk<AND>(replaceInSubexpr(body, s, s->right(), var_it), mk<EQ>(s->right(), var_it));
       }
     }
@@ -3125,7 +3157,7 @@ namespace ufo
         }
 
         ExprVector av;
-        filter (exp, bind::IsConst (), inserter(av, av.begin()));
+        filter (exp, IsConst (), inserter(av, av.begin()));
         if (!emptyIntersect(av, srcVars) && !emptyIntersect(av, dstVars))
           return mk<TRUE>(exp->getFactory());
       }
@@ -3174,7 +3206,7 @@ namespace ufo
       if (isOp<ComparissonOp>(exp) && !containsOp<ITE>(exp))
       {
         ExprVector av;
-        filter (exp, bind::IsConst (), inserter(av, av.begin()));
+        filter (exp, IsConst (), inserter(av, av.begin()));
         if (!emptyIntersect(av, srcVars) && !emptyIntersect(av, dstVars))
         {
           transitions.insert(exp);
@@ -3195,7 +3227,7 @@ namespace ufo
       {
         Expr lhs = exp->left();
         Expr rhs = exp->right();
-        if (bind::isBoolConst(lhs) || bind::isBoolConst(rhs) ||
+        if (isBoolConst(lhs) || isBoolConst(rhs) ||
             isOpX<NEG>(lhs) || isOpX<NEG>(rhs))
         {
           return mk<AND>(mk<OR>(mkNeg(lhs), rhs),
@@ -3231,7 +3263,7 @@ namespace ufo
 
     VisitAction operator() (Expr exp)
     {
-      if ((isOpX<SELECT>(exp) || isOpX<STORE>(exp)) && !findArray(exp->right()))
+      if ((isOpX<SELECT>(exp) || isOpX<STORE>(exp)) && !containsOp<ARRAY_TY>(exp->right()))
       {
         accs.insert(exp->right());
       }
@@ -3253,7 +3285,7 @@ namespace ufo
       if (isOpX<EQ>(exp))
       {
         ExprVector av;
-        filter (exp, bind::IsConst (), inserter(av, av.begin()));
+        filter (exp, IsConst (), inserter(av, av.begin()));
         if (av.size() != 2) return VisitAction::skipKids ();;
         for (int i = 0; i < srcVars.size(); i++)
         {
@@ -3271,11 +3303,11 @@ namespace ufo
               Expr cExpr = exp->right();
               cpp_int c = abs(lexical_cast<cpp_int>(cExpr));
               if (c > 1)
-                for (int j = 0; j < c; j++)
+                for (int j = 0; j < 2 /*c*/; j++) // GF: for large c it gives many cands
                   deltas.insert(mk<EQ>(mk<MOD>(
                     srcVars[i],
-                      mkTerm (mpz_class (string(c)), exp->getFactory())),
-                      mkTerm (mpz_class (j), exp->getFactory())));
+                      mkMPZ(c, exp->getFactory())),
+                      mkMPZ ((j), exp->getFactory())));
             }
           }
         }
@@ -3576,7 +3608,7 @@ namespace ufo
       if (isOpX<FORALL>(exp) || isOpX<EXISTS>(exp))
       {
         for (int i = 0; i < exp->arity() - 1; i++)
-          vars[exp].push_back(bind::fapp(exp->arg(i)));
+          vars[exp].push_back(fapp(exp->arg(i)));
 
         reverse(vars[exp].begin(),vars[exp].end());
 
@@ -3600,7 +3632,7 @@ namespace ufo
     QFregularizer (ExprVector& _vars): vars(_vars){};
     Expr operator() (Expr exp)
     {
-      if (bind::isBVar(exp)) return vars[bind::bvarId(exp)];
+      if (isBVar(exp)) return vars[bvarId(exp)];
       return exp;
     }
   };
@@ -3661,20 +3693,20 @@ namespace ufo
         else if (isOpX<GT>(c))
         {
           if (isOpX<MPZ>(c->left()))
-            ineqs.insert(mk<LEQ>(c->right(), mkTerm (mpz_class (string (lexical_cast<cpp_int>(c->left())-1)), exp->getFactory())));
+            ineqs.insert(mk<LEQ>(c->right(), mkMPZ (lexical_cast<cpp_int>(c->left())-1, exp->getFactory())));
           else if(isOpX<MPZ>(c->right()))
-            ineqs.insert(mk<LEQ>(mkTerm (mpz_class (string (lexical_cast<cpp_int>(c->right())+1)), exp->getFactory()), c->left()));
+            ineqs.insert(mk<LEQ>(mkMPZ (lexical_cast<cpp_int>(c->right())+1, exp->getFactory()), c->left()));
           else
-            ineqs.insert(mk<LEQ>(c->right(), mk<MINUS>(c->left(), mkTerm (mpz_class (1), exp->getFactory()))));
+            ineqs.insert(mk<LEQ>(c->right(), mk<MINUS>(c->left(), mkMPZ (1, exp->getFactory()))));
         }
         else if (isOpX<LT>(c))
         {
           if (isOpX<MPZ>(c->left()))
-            ineqs.insert(mk<LEQ>(mkTerm (mpz_class (string (lexical_cast<cpp_int>(c->left())+1)), exp->getFactory()), c->right()));
+            ineqs.insert(mk<LEQ>(mkMPZ (lexical_cast<cpp_int>(c->left())+1, exp->getFactory()), c->right()));
           else if(isOpX<MPZ>(c->right()))
-            ineqs.insert(mk<LEQ>(c->left(), mkTerm (mpz_class (string (lexical_cast<cpp_int>(c->right())-1)), exp->getFactory())));
+            ineqs.insert(mk<LEQ>(c->left(), mkMPZ (lexical_cast<cpp_int>(c->right())-1, exp->getFactory())));
           else
-            ineqs.insert(mk<LEQ>(c->left(), mk<MINUS>(c->right(), mkTerm (mpz_class (1), exp->getFactory()))));
+            ineqs.insert(mk<LEQ>(c->left(), mk<MINUS>(c->right(), mkMPZ (1, exp->getFactory()))));
         }
         else
         {
@@ -3701,7 +3733,6 @@ namespace ufo
       }*/
       else guesses.insert(c);
     }
-
 
     for (auto & z : eqs)
     {
@@ -3736,7 +3767,7 @@ namespace ufo
     }
 
     for (auto & a : ineqs) guesses.insert(simplifyArithm(a));
-//    guesses.insert(ineqs.begin(), ineqs.end());
+    //    guesses.insert(ineqs.begin(), ineqs.end());
 
     for (auto & e : eqs)
     {
@@ -3762,7 +3793,7 @@ namespace ufo
     {
       for (auto & in2 : ineqs)
       {
-//        if (bnd > guesses.size()) return;
+        //        if (bnd > guesses.size()) return;
         if (in1 == in2) continue;
 
         assert(isOpX<LEQ>(in1));
@@ -3775,6 +3806,68 @@ namespace ufo
         }
       }
     }
+  }
+
+  inline static void simplifyPropagate (ExprSet& cnj)
+  {
+    bool toRepeat = false;
+    map<Expr, ExprSet> vars;
+    for (auto & a : cnj)
+    {
+      filter (a, IsConst (), inserter(vars[a], vars[a].begin()));
+    }
+
+    vector<ExprSet::iterator> tmp;
+    ExprSet newCnjs;
+
+    for (auto it0 = cnj.begin(); it0 != cnj.end(); ++it0)
+    {
+      if (find(tmp.begin(), tmp.end(), it0) != tmp.end()) continue;
+      Expr a = *it0;
+      for (auto it = cnj.begin(); it != cnj.end(); ++it)
+      {
+        Expr b = *it;
+        if (a == b) continue;
+
+        if (contains(b, a))
+        {
+          if (find(tmp.begin(), tmp.end(), it) != tmp.end())
+          {
+            toRepeat = true;
+            continue;
+          }
+          newCnjs.insert(simplifyBool(replaceAll(b, a, mk<TRUE>(a->getFactory()))));
+          tmp.push_back(it);
+          continue;
+        }
+
+        ExprSet& av = vars[a];
+        ExprSet& bv = vars[b];
+        if (av.size() != 2 ||
+            !isOpX<EQ>(a) ||
+            !isSubset(av, bv)) continue;
+
+        for (auto v : av)
+        {
+          Expr t = ineqMover(a, v);
+          if (t->left() == v)
+          {
+            if (find(tmp.begin(), tmp.end(), it) != tmp.end())
+            {
+              toRepeat = true;
+              continue;
+            }
+            newCnjs.insert(simplifyBool(simplifyArithm(replaceAll(b, t->left(), t->right()))));
+            tmp.push_back(it);
+            break;
+          }
+        }
+      }
+    }
+
+    for (auto & it : tmp) cnj.erase(it);
+    cnj.insert(newCnjs.begin(), newCnjs.end());
+    if (toRepeat) simplifyPropagate(cnj);
   }
 }
 

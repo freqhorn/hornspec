@@ -40,10 +40,13 @@ namespace ufo
     bool hasArrays = false;
     ExprSet declsVisited;
     map<HornRuleExt*, vector<ExprVector>> abdHistory;
+    int globalIter = 0;
+    int strenBound;
+    bool debug = false;
 
     public:
 
-    NonlinCHCsolver (CHCs& r) : m_efac(r.m_efac), ruleManager(r), u(m_efac) {}
+    NonlinCHCsolver (CHCs& r, int _b) : m_efac(r.m_efac), ruleManager(r), u(m_efac), strenBound(_b) {}
 
     bool checkAllOver (bool checkQuery = false)
     {
@@ -145,20 +148,21 @@ namespace ufo
       eTmp = eliminateQuantifiers(eTmp, ev3);
       if (backward) eTmp = mkNeg(eTmp);
       eTmp = simplifyBool(simplifyArithm(eTmp, false, true));
-      e = replaceAll (eTmp, replsRev);
 
-//      ExprSet cnjs;
-//      getConj(e, cnjs);
-//      shrinkCnjs(cnjs);
-//      e = conjoin(cnjs, m_efac);
-//      e = simplifyBool(e);
+      ExprSet tmp;
 
-      if (!ev2.empty())
-        e = replaceAll(e, ev1, ev2); // rename variables only if ev2 is nonempty
       if (mutate)
-        mutateHeuristic(e, guesses);
+        mutateHeuristic(eTmp, tmp);
       else
-        getConj(e, guesses);
+        getConj(eTmp, tmp);
+
+      for (auto g : tmp)
+      {
+        g = replaceAll (g, replsRev);
+        if (!ev2.empty())
+          g = replaceAll(g, ev1, ev2);
+        guesses.insert(g);
+      }
     }
 
     // search for a CHC having the form r1 /\ .. /\ rn => rel, where rel \not\in {r1, .., rn}
@@ -226,7 +230,7 @@ namespace ufo
       }
     }
 
-    void propagateCandidatesBackward(HornRuleExt& hr)
+    void propagateCandidatesBackward(HornRuleExt& hr, bool forceConv = false)
     {
 //      for (auto & hr : ruleManager.chcs)
       {
@@ -259,15 +263,21 @@ namespace ufo
           if (getQuantifiedCands(false, hr) == NULL) return;
           else cands.insert(mk<FALSE>(m_efac));
         }
-        else cands = candidates[dstRel];
+        else cands.insert(simplifyBool(conjoin(candidates[dstRel], m_efac)));
 
         ExprSet mixedCands;
         ExprVector curCnd;
 
         for (int i = 0; i < rels.size(); i++)
-          curCnd.push_back(replaceAll(conjoin(candidates[rels[i]], m_efac),
-            ruleManager.invVars[rels[i]], hr.srcVars[i]));
+        {
+          ExprSet tmp;
+          getConj(replaceAll(conjoin(candidates[rels[i]], m_efac),
+                             ruleManager.invVars[rels[i]], hr.srcVars[i]), tmp);
+          curCnd.push_back(conjoin(tmp, m_efac));
+        }
 
+        // actually, just a single candidate, in the most recent setting;
+        // TODO: remove the loop (or find use of it)
         for (auto & c : cands)
         {
           ExprSet all, newCnd;
@@ -293,17 +303,22 @@ namespace ufo
 
           // oftentimes, newCnd is a disjunction that can be simplified
           // by considering other candidates in curCnd
-          auto tmp = newCnd;
-          tmp.insert(curCnd.begin(), curCnd.end());
+          ExprSet tmp, tmp2;
+          for (auto c : newCnd) getConj(c, tmp);
+          for (auto c : curCnd) getConj(c, tmp);
           shrinkCnjs(tmp);
-
-          for (auto & b : tmp)
-            if (find(curCnd.begin(), curCnd.end(), b) == curCnd.end())
-              mixedCands.insert(b);
+          getConj(conjoin(tmp, m_efac), tmp2);
+          ineqMerger(tmp2, true);
+          simplifyPropagate(tmp2);
+          Expr stren = simplifyArithm(conjoin(tmp2, m_efac));
+          mixedCands.insert(stren);
         }
 
         if (hr.srcVars.size() == 1)
-          candidates[rels[0]].insert(mixedCands.begin(), mixedCands.end());
+        {
+          if (forceConv) forceConvergence(candidates[rels[0]], mixedCands);
+          for (auto & m : mixedCands) getConj(m, candidates[rels[0]]);
+        }
         else
         {
           // decomposition here
@@ -331,8 +346,11 @@ namespace ufo
               if (!trueCands[i])
                 allGuessesInit.insert(curCnd[i]);
 
+          // actually, just a single candidate, in the most recent setting;
+          // TODO: remove the loop (or find use of it)
           for (auto it = mixedCands.begin(); it != mixedCands.end(); )
           {
+            if (containsOp<ARRAY_TY>(*it)) { ++it; continue; }
             Expr a = *it;
             ExprSet processed;
             ExprSet allGuesses = allGuessesInit;
@@ -374,11 +392,12 @@ namespace ufo
                 all.insert(u.getModel(allVarsExcept));
 
               // in the case of nonlin, invVars is empty, so no renaming happens:
+
               preproGuessing(conjoin(all, m_efac), vars, invVars, backGuesses, true, false);
 
               if (occursNum[r].size() == 1)
               {
-                candidates[r].insert(backGuesses.begin(), backGuesses.end());
+                getConj(conjoin(backGuesses, m_efac), candidates[r]);
                 histRec.push_back(conjoin(backGuesses, m_efac));
                 allGuesses.insert(backGuesses.begin(), backGuesses.end());
               }
@@ -476,25 +495,24 @@ namespace ufo
             // fairness heuristic (need to be tested properly):
             {
               bool tryAgain = false;
-              if (!abdHistory[&hr].empty() && abdHistory[&hr].back() == histRec)
+              if (!abdHistory[&hr].empty() && equivVecs(abdHistory[&hr].back(), histRec))
               {
                 candidates = candidatesTmp;
 
                 for (int i = 0; i < histRec.size(); i++)
                 {
-                  if (curCnd[i] != histRec[i])
-                  {
-                    trueCands[i] = false;
-                    allGuessesInit.insert(curCnd[i]);
-                  }
-                  else
+                  if (u.isEquiv(curCnd[i], histRec[i]))
                   {
                     numTrueCands++;
                     trueCands[i] = true;
                     trueRels.insert(rels[i]);
                   }
+                  else
+                  {
+                    trueCands[i] = false;
+                    allGuessesInit.insert(curCnd[i]);
+                  }
                 }
-
                 tryAgain = true; // to keep
               }
 
@@ -502,10 +520,10 @@ namespace ufo
 
               if (tryAgain)
               {
-                if (abdHistory[&hr].size() > 2 /*hardcoded bound*/)
+                if (abdHistory[&hr].size() > 5 /*hardcoded bound*/)
                 {
                   tryAgain = false;
-                  for (int i = 0; i < 2 /*hardcoded bound*/; i++)
+                  for (int i = 0; i < 5 /*hardcoded bound*/; i++)
                     if (abdHistory[&hr][abdHistory[&hr].size() - 1 - i] != histRec)
                     {
                       tryAgain = true;
@@ -525,7 +543,7 @@ namespace ufo
     // inductive strengthening of candidates (by abduction)
     void strengthen(int deep = 0)
     {
-      if (deep > 1) return; // hardcoded bound
+      if (deep >= strenBound) return;
 
       // currently, relies on the order in CHC file; TBD: proper backwards traversing
       for (auto hr = ruleManager.chcs.rbegin(); hr != ruleManager.chcs.rend(); hr++)
@@ -535,11 +553,49 @@ namespace ufo
           filterUnsat();
           if (!checkCHC(*hr, candidates))
           {
-            propagateCandidatesBackward(*hr);
+            propagateCandidatesBackward(*hr, deep == strenBound - 1);
             strengthen(deep+1);
           }
         }
       }
+    }
+
+    void forceConvergence (ExprSet& prev, ExprSet& next)
+    {
+      if (prev.size() < 1 || next.size() < 1) return;
+      ExprFactory& efac = (*next.begin())->getFactory();
+
+      ExprSet prevSplit, nextSplit, prevSplitDisj, nextSplitDisj, common;
+
+      for (auto & a : prev) getConj (a, prevSplit);
+      for (auto & a : next) getConj (a, nextSplit);
+
+      mergeDiseqs(prevSplit);
+      mergeDiseqs(nextSplit);
+
+      if (prevSplit.size() != 1 || nextSplit.size() != 1)
+        return; // GF: to extend
+
+      getDisj(*prevSplit.begin(), prevSplitDisj);
+      getDisj(*nextSplit.begin(), nextSplitDisj);
+
+      for (auto & a : prevSplitDisj)
+        for (auto & b : nextSplitDisj)
+          if (a == b) common.insert(a);
+
+      if (common.empty()) return;
+      next.clear();
+      next.insert(disjoin(common, efac));
+    }
+
+    bool equivVecs (ExprVector e1, ExprVector e2)
+    {
+      if (e1.size() != e2.size()) return false;
+      for (int i = 0; i < e1.size(); i++)
+      {
+        if (!u.isEquiv(e1[i], e2[i])) return false;
+      }
+      return true;
     }
 
     void getImplicationGuesses(map<Expr, ExprSet>& postconds)
@@ -599,7 +655,19 @@ namespace ufo
         outs () << ") Bool\n  ";
 
         ExprSet lms = a.second;
-        Expr res = simplifyBool(simplifyArithm(conjoin(lms, m_efac)));
+        Expr sol = conjoin(lms, m_efac);
+
+        // sanity checks:
+        ExprSet allVars;
+        filter (sol, bind::IsConst (), inserter (allVars, allVars.begin()));
+        minusSets(allVars, ruleManager.invVars[a.first]);
+        map<Expr, ExprVector> qv;
+        getQVars (sol, qv);
+        for (auto & q : qv) minusSets(allVars, q.second);
+        assert (allVars.empty());
+//        if (!u.isSat(sol)) assert(0);
+
+        Expr res = simplifyBool(simplifyArithm(sol));
         if (simplify)
         {
           lms.clear();
@@ -693,8 +761,20 @@ namespace ufo
       return body;
     }
 
-    bool hasQuantifiedCands(map<Expr, ExprSet>& cands)
+    bool isSkippable(Expr model, ExprVector vars, map<Expr, ExprSet>& cands)
     {
+      if (model == NULL) return true;
+
+      for (auto v: vars)
+      {
+        if (!containsOp<ARRAY_TY>(v)) continue;
+        Expr tmp = u.getModel(v);
+        if (tmp != v && !isOpX<CONST_ARRAY>(tmp) && !isOpX<STORE>(tmp))
+        {
+          return true;
+        }
+      }
+
       for (auto & a : cands)
         for (auto & b : a.second)
           if (containsOp<FORALL>(b)) return true;
@@ -718,7 +798,7 @@ namespace ufo
           Expr dstRel = hr->dstRelation;
 
           Expr model = u.getModel(hr->dstVars);
-          if (model == NULL || hasQuantifiedCands(candidatesTmp))
+          if (isSkippable(model, hr->dstVars, candidatesTmp))
           {
             candidatesTmp[dstRel].clear();
             res2 = false;
@@ -789,7 +869,6 @@ namespace ufo
           getCounters(a.body, counters);
           for (Expr c : counters)
           {
-            c = simplifyArithm(c);
             ind = getVarIndex(c, a.srcVars[0] /*hack for now*/);
             if (ind < 0) continue;
 
@@ -840,12 +919,31 @@ namespace ufo
       if (range == NULL) return;
 
       // cell property guessing
+      Expr body = hr->body;
+      body = unfoldITE(body);
+      body = rewriteSelectStore(body);
       ExprSet tmp;
-      getArrIneqs(unfoldITE(overapproxTransitions(hr->body, hr->srcVars[0], hr->dstVars)), tmp);
+      ExprVector qVars1, qVars2;
+      for (int i = 0; i < hr->dstVars.size(); i++)
+      {
+        if (ruleManager.invVars[hr->srcRelations[0]][i] == iterator)
+        {
+          qVars1.push_back(hr->dstVars[i]);
+          qVars2.push_back(iterator);
+        }
+        else
+        {
+          qVars1.push_back(ruleManager.invVars[hr->srcRelations[0]][i]);
+          qVars2.push_back(hr->dstVars[i]);
+        }
+      }
+      body = simpleQE(body, qVars1);
+
+      preproGuessing(body, qVars2, ruleManager.invVars[hr->srcRelations[0]], tmp);
 
       for (auto s : tmp)
       {
-        s = replaceAll(s, hr->dstVars, hr->srcVars[0]); // hack for now
+        if (!containsOp<SELECT>(s)) continue;
         s = replaceAll(s, iterator, qVar);
 
         ExprVector args;
@@ -894,23 +992,14 @@ namespace ufo
 
               if (newRange == NULL) continue;
 
-              ExprSet vvv;
-              filter (s, bind::IsConst (), inserter (vvv, vvv.begin())); // prepare vars
-              for (auto c : cnjs)
-              {
-                // naive prop through equalities; works only for some benchs; TODO: extend
-                if (!isOpX<EQ>(c)) continue;
-                if (find(vvv.begin(), vvv.end(), c->left()) != vvv.end()) s = replaceAll(s, c->left(), c->right());
-                else if (find(vvv.begin(), vvv.end(), c->right()) != vvv.end()) s = replaceAll(s, c->right(), c->left());
-              }
-
               ExprVector args;
               args.push_back(qVar->left());
               args.push_back(mk<IMPL>(newRange, s));
-              Expr newCand = mknary<FORALL>(args);
+              Expr newCand = getForallCnj(
+                    simpleQE(
+                        mk<AND>(hr2.body,mknary<FORALL>(args)), hr2.srcVars[0]));
 
               newCand = replaceAll(newCand, hr2.dstVars, ruleManager.invVars[hr2.dstRelation]);
-
               // finally, try the propagated guess:
               candidates[hr2.dstRelation].insert(newCand);
             }
@@ -946,6 +1035,15 @@ namespace ufo
       }
     }
 
+    Expr getForallCnj (Expr cands)
+    {
+      ExprSet cnj;
+      getConj(cands, cnj);
+      for (auto & cand : cnj)
+        if (isOpX<FORALL>(cand)) return cand;
+      return NULL;
+    }
+
     bool equalCands(map<Expr, ExprSet>& cands)
     {
       for (auto & a : candidates)
@@ -970,6 +1068,11 @@ namespace ufo
         auto candidatesTmp = candidates;
         for (bool fwd : { false, true })
         {
+          if (debug)
+          {
+            outs () << "iter " << globalIter << "." << fwd << "\nCurrent candidates:\n";
+            printCands(false);
+          }
           declsVisited.clear();
           declsVisited.insert(ruleManager.failDecl);
           propagate(fwd);
@@ -979,6 +1082,7 @@ namespace ufo
           if (checkAllOver(true)) return printCands();
         }
         if (equalCands(candidatesTmp)) break;
+        if (hasArrays) break; // just one iteration is enough for arrays (for speed)
       }
 
       getImplicationGuesses(candidates);  // seems broken now; to revisit completely
@@ -1082,13 +1186,13 @@ namespace ufo
     }
   };
 
-  inline void solveNonlin(string smt, bool inv = true)
+  inline void solveNonlin(string smt, bool inv, int stren)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    NonlinCHCsolver nonlin(ruleManager);
+    NonlinCHCsolver nonlin(ruleManager, stren);
     if (inv)
       nonlin.guessAndSolve();
     else
