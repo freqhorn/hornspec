@@ -351,7 +351,7 @@ namespace ufo
       }
     }
 
-    Expr getPostcondition (int i, ExprVector& vars)
+    Expr getPostcondition (int i)
     {
       HornRuleExt& hr = chcs[i];
       ExprSet cnjs;
@@ -363,8 +363,7 @@ namespace ufo
       {
         if (emptyIntersect(a, allVars)) newCnjs.insert(a);
       }
-      Expr res = conjoin(newCnjs, m_efac);
-      return replaceAll(res, hr.dstVars, vars);
+      return conjoin(newCnjs, m_efac);
     }
 
     void print()

@@ -34,13 +34,13 @@ int main (int argc, char ** argv)
         " freqn [--help]                   show help\n" <<
         " freqn [options] <file.smt2>      discover invariants for a system of constrained Horn clauses\n\n" <<
         "Options:\n" <<
-        "  --stren                         number of strengthening iterations (by default, 1) \n" <<
-        "  --cex                           search for counterexamples                         \n";
+        "  --stren <NUM>                   number of strengthening iterations (by default, 1)          \n" <<
+        "  --cex <NUM>                     search for counterexamples of given length                  \n";
 
     return 0;
   }
-  bool cex = getBoolValue("--cex", false, argc, argv);
+  int cex = getIntValue("--cex", 0, argc, argv);
   int str = getIntValue("--stren", 1, argc, argv);
-  solveNonlin(string(argv[argc-1]), !cex, str);
+  solveNonlin(string(argv[argc-1]), cex, str);
   return 0;
 }

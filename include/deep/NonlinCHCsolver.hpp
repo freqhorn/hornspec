@@ -1098,41 +1098,47 @@ namespace ufo
     }
 
     // naive solving, without invariant generation
-    bool solveIncrementally(int unr, ExprVector& rels, vector<ExprVector>& args)
+    int solveIncrementally(int bound, int unr, ExprVector& rels, vector<ExprVector>& args)
     {
-      if (unr > 1000) // hardcoded bound
+      if (unr > bound)       // maximum bound reached
       {
-        outs () << "(maximum bound reached)\n";
-        return true;
+        return 2;
       }
-      else if (rels.empty())
+      else if (rels.empty()) // base case == init is reachable
       {
-        return false;
+        return 0;
       }
 
-      bool res = true;
+      int res = 1;
 
       // reserve copy;
       auto ssaStepsTmp = ssaSteps;
       int varCntTmp = varCnt;
 
-      vector<vector<int>> availableRules;
+      vector<vector<int>> applicableRules;
       for (int i = 0; i < rels.size(); i++)
       {
-        vector<int> available;
-        for (auto & b : ruleManager.incms[rels[i]])
+        vector<int> applicable;
+        for (auto & r : ruleManager.incms[rels[i]])
         {
-          Expr postcond = ruleManager.getPostcondition(b, args[i]);
-          // identifying available rules
-          if (u.isSat(postcond, conjoin(ssaSteps, m_efac)))
+          Expr body = ruleManager.chcs[r].body; //ruleManager.getPostcondition(r);
+          if (args.size() != 0)
+            body = replaceAll(body, ruleManager.chcs[r].dstVars, args[i]);
+          // identifying applicable rules
+          if (u.isSat(body, conjoin(ssaSteps, m_efac)))
           {
-            available.push_back(b);
+            applicable.push_back(r);
           }
         }
-        availableRules.push_back(available);
+        if (applicable.empty())
+        {
+          return 1;         // nothing is reachable; thus it is safe here
+        }
+        applicableRules.push_back(applicable);
       }
+
       vector<vector<int>> ruleCombinations;
-      getCombinations(availableRules, ruleCombinations);
+      getCombinations(applicableRules, ruleCombinations);
 
       for (auto & c : ruleCombinations)
       {
@@ -1168,35 +1174,43 @@ namespace ufo
 
           ssaSteps.push_back(body);
         }
+
         if (u.isSat(conjoin(ssaSteps, m_efac))) // TODO: optimize with incremental SMT solving (i.e., using push / pop)
         {
-          res = res && solveIncrementally(unr + 1, rels2, args2);
+          int res_tmp = solveIncrementally(bound, unr + 1, rels2, args2);
+          if (res_tmp == 0) return 0;           // bug is found for some combination
+          else if (res_tmp == 2) res = 2;
         }
       }
       return res;
     }
 
     // naive solving, without invariant generation
-    void solveIncrementally()
+    void solveIncrementally(int bound)
     {
       ExprVector query;
       query.push_back(ruleManager.failDecl);
       vector<ExprVector> empt;
-      outs () << ((solveIncrementally (0, query, empt)) ? "unsat\n" : "sat\n");
+      switch (solveIncrementally (bound, 0, query, empt))
+      {
+        case 0: outs () << "sat\n"; break;
+        case 1: outs () << "unsat\n"; break;
+        case 2: outs () << "unknown\n"; break;
+      }
     }
   };
 
-  inline void solveNonlin(string smt, bool inv, int stren)
+  inline void solveNonlin(string smt, int inv, int stren)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     NonlinCHCsolver nonlin(ruleManager, stren);
-    if (inv)
+    if (inv == 0)
       nonlin.guessAndSolve();
     else
-      nonlin.solveIncrementally();
+      nonlin.solveIncrementally(inv);
   };
 }
 
