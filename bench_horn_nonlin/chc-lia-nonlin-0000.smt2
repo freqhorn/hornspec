@@ -8,3 +8,4 @@
 (assert (forall ((x0 Int)) (=> true (P0 x0))))
 (assert (forall ((x1 Int) (x0 Int)) (=> (and (P1 x0 x1) (or (< x1 x0) (> x1 x0))) false)))
 (check-sat)
+(get-model)

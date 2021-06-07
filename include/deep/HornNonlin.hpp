@@ -88,6 +88,7 @@ namespace ufo
     map<Expr, vector<int>> incms;
     int qCHCNum;  // index of the query in chc
     int total_var_cnt = 0;
+    string infile;
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3) {};
 
@@ -219,6 +220,7 @@ namespace ufo
 
     void parse(string smt)
     {
+      infile = smt;
       std::unique_ptr<ufo::ZFixedPoint <EZ3> > m_fp;
       m_fp.reset (new ZFixedPoint<EZ3> (m_z3));
       ZFixedPoint<EZ3> &fp = *m_fp;
@@ -335,6 +337,7 @@ namespace ufo
         incms[chcs[i].dstRelation].push_back(i);
     }
 
+    
     void addFailDecl(Expr decl)
     {
       if (failDecl == NULL)

@@ -572,6 +572,24 @@ namespace ufo
       return out;
     }
 
+    /// Asserts (forall vars body). Work-around until quantifiers are
+    /// properly supported by Expr
+    template <typename Range>
+    void assertForallExpr (const Range &vars, Expr body)
+    {
+      z3::ast ast (z3.toAst (body));
+      std::vector<Z3_app> bound;
+      bound.reserve (boost::size (vars));
+      for (const Expr &v : vars)
+	bound.push_back (Z3_to_app (ctx, z3.toAst (v)));
+
+      Z3_ast forall = Z3_mk_forall_const (ctx, 0,
+					  bound.size (), &bound[0],
+					  0, NULL, ast);
+      Z3_solver_assert (ctx, solver, forall);
+      ctx.check_error ();
+    }
+
     void assertExpr (Expr e)
     {
       z3::ast ast (z3.toAst (e));

@@ -538,7 +538,9 @@ namespace ufo
           if (isOpX<EQ>(*it)){
             if (var == (*it)->left()) {
               pushVecRedund(conjEG, (*it)->right());
-            } else {
+            } else if (var == (*it)->right()) {
+	      pushVecRedund(conjEG, (*it)->left());
+	    } else {
               incomplete = true;
             }
           }
