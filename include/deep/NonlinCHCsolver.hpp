@@ -53,10 +53,11 @@ namespace ufo
     map<Expr, Expr> extend;
     ExprVector fixedRels;
     map<Expr, vector<int> > reachChcs;
+    string SYGUS_BIN;
 
     public:
 
-    NonlinCHCsolver (CHCs& r, int _b) : m_efac(r.m_efac), ruleManager(r), u(m_efac), strenBound(_b) {}
+    NonlinCHCsolver (CHCs& r, int _b) : m_efac(r.m_efac), ruleManager(r), u(m_efac), strenBound(_b), SYGUS_BIN("") {}
 
     bool checkAllOver (bool checkQuery = false)
     {
@@ -1499,7 +1500,7 @@ namespace ufo
 
     void getCurSoln(map<Expr, ExprSet> & soln, const ExprVector & rels, map<Expr, ExprVector> & invVars)
     {
-      outs() << "getcursoln: \n";
+      // outs() << "getcursoln: \n";
       for (auto r : rels) {
 	soln[r].clear();
 	for (auto e : candidates) {
@@ -1736,10 +1737,10 @@ namespace ufo
 
       for (auto rel : rels) {
 	Expr model = u.getModel(newVars[rel]);
-	outs() << "model: " << *model << "\n";//DEBUG
+	// outs() << "model: " << *model << "\n";//DEBUG
 	Expr weakerSoln = mk<OR>(conjoin(candidates[rel],m_efac), replaceAll(model, newVars[rel], ruleManager.invVars[rel]));
 	soln.insert({rel, weakerSoln});
-	outs() << "weakersoln: " << *weakerSoln << "\n";//DEBUG
+	// outs() << "weakersoln: " << *weakerSoln << "\n";//DEBUG
       }	
 
       for (auto d : ruleManager.decls) {
@@ -1752,16 +1753,16 @@ namespace ufo
 	}
       }
 
-      //debug
-      for (auto se : soln) {
-	outs() << *(se.first) << "->\n";
-	outs() << *(se.second) << "\n";
-      }
-      for (auto ce : candidates) {
-	outs() << *(ce.first) << "->\n";
-	for (auto c : ce.second)
-	  outs() << *c << "\n";
-      }
+      // //debug
+      // for (auto se : soln) {
+      // 	outs() << *(se.first) << "->\n";
+      // 	outs() << *(se.second) << "\n";
+      // }
+      // for (auto ce : candidates) {
+      // 	outs() << *(ce.first) << "->\n";
+      // 	for (auto c : ce.second)
+      // 	  outs() << *c << "\n";
+      // }
 
       if (rels.size() > 0) {
 	for (auto d : ruleManager.decls) {
@@ -1954,7 +1955,7 @@ namespace ufo
       Result_t res = solveWeakCHC(newsmt, soln);
       
       if (res == Result_t::SAT) {
-	outs() << "CHC proved s\n";
+	// outs() << "CHC proved s\n";
 	for (auto e : soln) {
 	  if (find (fixedRels.begin(), fixedRels.end(), e.first) == fixedRels.end()) {	    
 	      candidates[e.first].clear();
@@ -2157,11 +2158,10 @@ namespace ufo
 
     Result_t solveWeakSygus(map<Expr, ExprVector> & syvars, const ExprVector & weakenRels, const string & slfile, map<Expr, Expr> & soln)
     {
-      //TODO: change this to input file or something
-      const string SYGUS_BIN = "/home/u1392220/tmp/max_synth/ws/modver/build/run_sygus.sh";
+      // const string SYGUS_BIN = "/home/u1392220/tmp/max_synth/ws/modver/build/run_sygus.sh";
       const string output = slfile.substr(0, slfile.find_last_of(".")) + ".out";
 
-      outs() << "starting sygus on file " << slfile << "\n";
+      // outs() << "starting sygus on file " << slfile << "\n";
       
       string cmd = SYGUS_BIN + " " + slfile + " " + output;
       int sysret = system(cmd.c_str());
@@ -2216,10 +2216,10 @@ namespace ufo
       }
 
       //debug
-      outs() << "soln from sygus: \n";
-      for (auto se : soln) {
-	outs() << *(se.first) << " -> " << *(se.second) << "\n";
-      }
+      // outs() << "soln from sygus: \n";
+      // for (auto se : soln) {
+      // 	outs() << *(se.first) << " -> " << *(se.second) << "\n";
+      // }
       
       return Result_t::SAT;
             
@@ -2234,7 +2234,7 @@ namespace ufo
       Result_t res = solveWeakSygus(syvars, weakenRels, newsl, soln);
       
       if (res == Result_t::SAT) {
-      	outs() << "sygus proved s\n";
+      	// outs() << "sygus proved s\n";
       	for (auto e : soln) {
       	  if (find (fixedRels.begin(), fixedRels.end(), e.first) == fixedRels.end()) {	    
       	      candidates[e.first].clear();
@@ -2314,7 +2314,7 @@ namespace ufo
 	if (res == Result_t::UNKNOWN){
 	  // outs() << "unknown\n";
 	  // return;
-	  outs() << "GAS is uk\n";
+	  // outs() << "GAS is uk\n";
 	  firstSMTCall = true;
 	}
 
@@ -2322,18 +2322,18 @@ namespace ufo
       }
 
       //debug
-      if (!firstSMTCall)
-	outs() << "GAS first iteration done\n";
-      for (auto e : candidates) {
-	outs() << "rel: " << *(e.first) << "\n";
-	for (auto c : e.second) {
-	  outs() << *(c) << "\n";
-	}
-      }
-      outs() << "rels: \n";
-      for (auto r : rels) {
-	outs() << *r << "\n";
-      }
+      // if (!firstSMTCall)
+      // 	outs() << "GAS first iteration done\n";
+      // for (auto e : candidates) {
+      // 	outs() << "rel: " << *(e.first) << "\n";
+      // 	for (auto c : e.second) {
+      // 	  outs() << *(c) << "\n";
+      // 	}
+      // }
+      // outs() << "rels: \n";
+      // for (auto r : rels) {
+      // 	outs() << *r << "\n";
+      // }
       
       while (true) {
 
@@ -2398,13 +2398,13 @@ namespace ufo
 	}
 	
 	//debug
-	outs() << "SOLN:\n";
-	for (auto ce : candidates) {
-	  outs() << *(ce.first) << "->\n";
-	  for (auto c : ce.second) {
-	    outs() << *c <<"\n";
-	  }
-	}
+	// outs() << "SOLN:\n";
+	// for (auto ce : candidates) {
+	//   outs() << *(ce.first) << "->\n";
+	//   for (auto c : ce.second) {
+	//     outs() << *c <<"\n";
+	//   }
+	// }
 	for (auto hr : ruleManager.chcs) {
 	  if (!checkCHC(hr, candidates)) {
 	    outs() << "something is wrong (after CHC)!\n";
@@ -2548,8 +2548,13 @@ namespace ufo
       case Result_t::UNKNOWN: outs () << "unknown\n"; break;
       }
     }
+
+    void setSygusPath(string sp)
+    {
+      SYGUS_BIN=sp;
+    }
   };
-  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool useGAS, bool usesygus, bool useUC, bool newenc, bool fixCRels)
+  inline void solveNonlin(string smt, int inv, int stren, bool maximal, const vector<string> & relsOrder, bool useGAS, bool usesygus, bool useUC, bool newenc, bool fixCRels, string syguspath)
   {
     
     ExprFactory m_efac;
@@ -2557,6 +2562,10 @@ namespace ufo
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
     NonlinCHCsolver nonlin(ruleManager, stren);
+
+    if (usesygus) {
+      nonlin.setSygusPath(syguspath);
+    }
     
     if (inv == 0) {      
       if (maximal) {
