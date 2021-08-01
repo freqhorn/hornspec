@@ -1494,27 +1494,14 @@ namespace ufo
         ExprVector eqVars;
         ExprVector eqVarsp;
         for (int i = 0; i < ruleManager.invVars[rel].size(); i++) {
-          Expr newVar;
-          Expr newVarp;
           Expr var = ruleManager.invVars[rel][i];
-          if (bind::isIntConst(var)) {
-            newVar = bind::intConst(mkTerm<string>("_MAX_" + relName + "_" + to_string(i), m_efac));
-            newVarp = bind::intConst(mkTerm<string>("_MAXP_" + relName + "_" + to_string(i), m_efac));
-          } else if (bind::isRealConst(var)) {
-            newVar = bind::realConst(mkTerm<string>("_MAX_" + relName + "_" + to_string(i), m_efac));
-            newVarp = bind::intConst(mkTerm<string>("_MAX_" + relName + "_" + to_string(i), m_efac));
-          } else if (bind::isBoolConst(var)) {
-            newVar = bind::intConst(mkTerm<string>("_MAX_" + relName + "_" + to_string(i), m_efac));
-            newVarp = bind::intConst(mkTerm<string>("_MAX_" + relName + "_" + to_string(i), m_efac));
-          } else {
-            outs() << "Unsupport vartype: " << u.varType(var) << "\n";
-            assert(0);
-          }
-
+          string name_suff = relName + "_" + to_string(i);
+          Expr newVar = cloneVar(var, mkTerm<string>("_MAX_" + name_suff, m_efac));
+          Expr newVarp = cloneVar(var, mkTerm<string>("_MAXP_" + name_suff, m_efac));
           tvars.push_back(newVar);
           tvarsp.push_back(newVarp);
-          eqVars.push_back(mk<EQ>(ruleManager.invVars[rel][i], newVar));
-          eqVarsp.push_back(mk<EQ>(ruleManager.invVars[rel][i], newVarp));
+          eqVars.push_back(mk<EQ>(var, newVar));
+          eqVarsp.push_back(mk<EQ>(var, newVarp));
         }
         Expr curCand = conjoin(candidates[rel], m_efac);
         newCand.insert({rel, mk<OR>(curCand, conjoin(eqVars, m_efac))});
